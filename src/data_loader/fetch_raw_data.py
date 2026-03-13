@@ -17,6 +17,9 @@ JVOPEN_SPEC_MAP = {
     "JC": "RACERCVN",
     "TC": "RACERCVN",
     "CC": "RACERCVN",
+    # Workout record IDs are distributed through their workout dataspecs.
+    "HC": "SLOP",
+    "WC": "WOOD",
 }
 
 # Add src to path to import jvlink_client

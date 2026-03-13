@@ -38,6 +38,8 @@ class FetchRawDataTests(unittest.TestCase):
     def test_resolve_dataspec_routes_race_day_record_specs_to_racercvn(self):
         self.assertEqual(resolve_dataspec("WH"), ("RACERCVN", "WH"))
         self.assertEqual(resolve_dataspec("JC"), ("RACERCVN", "JC"))
+        self.assertEqual(resolve_dataspec("HC"), ("SLOP", None))
+        self.assertEqual(resolve_dataspec("WC"), ("WOOD", None))
         self.assertEqual(resolve_dataspec("RACE"), ("RACE", None))
 
     def test_validate_dataspec_request_rejects_setup_mode_for_race_day_streams(self):
