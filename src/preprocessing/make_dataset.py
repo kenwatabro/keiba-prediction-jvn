@@ -1,0 +1,1201 @@
+import argparse
+import glob
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from parser import JVParser
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_RAW_DIR = PROJECT_ROOT / "data" / "raw"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+
+RACE_KEY_COLS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"]
+RACE_CONTEXT_COLS = [
+    "YoubiCD",
+    "GradeCD",
+    "JyuryoCD",
+    "JyokenCD1",
+    "JyokenCD2",
+    "JyokenCD3",
+    "JyokenCD4",
+    "JyokenCD5",
+    "JyokenName",
+    "Kyori",
+    "TrackCD",
+    "CourseKubunCD",
+    "Honsyokin1",
+    "Honsyokin2",
+    "Honsyokin3",
+    "HassoTime",
+    "TorokuTosu",
+    "SyussoTosu",
+    "NyusenTosu",
+    "TenkoCD",
+    "SibaBabaCD",
+    "DirtBabaCD",
+    "TenkoBaba",
+    "HaronTimeS3",
+    "HaronTimeS4",
+    "HaronTimeL3",
+    "HaronTimeL4",
+]
+HORSE_CONTEXT_COLS = [
+    "Wakuban",
+    "Umaban",
+    "KettoNum",
+    "Bamei",
+    "UmaKigoCD",
+    "SexCD",
+    "HinsyuCD",
+    "KeiroCD",
+    "Barei",
+    "TozaiCD",
+    "ChokyosiCode",
+    "BanusiCode",
+    "Futan",
+    "KisyuCode",
+    "MinaraiCD",
+    "BaTaijyu",
+    "ZogenFugo",
+    "ZogenSa",
+    "IJyoCD",
+    "NyusenJyuni",
+    "KakuteiJyuni",
+    "Time",
+    "ChakusaCD",
+    "Jyuni1c",
+    "Jyuni2c",
+    "Jyuni3c",
+    "Jyuni4c",
+    "Odds",
+    "Ninki",
+]
+WH_BASE_COLS = [
+    "HappyoTime",
+]
+HC_CONTEXT_COLS = [
+    "MakeDate",
+    "TresenKubun",
+    "ChokyoDate",
+    "ChokyoTime",
+    "KettoNum",
+    "HaronTime4",
+    "HaronTime3",
+    "HaronTime2",
+    "LapTime1",
+]
+WC_CONTEXT_COLS = [
+    "MakeDate",
+    "TresenKubun",
+    "ChokyoDate",
+    "ChokyoTime",
+    "KettoNum",
+    "Course",
+    "BabaAround",
+    "HaronTime5",
+    "HaronTime4",
+    "HaronTime3",
+    "LapTime1",
+]
+NUMERIC_COLS = [
+    "Kyori",
+    "Honsyokin1",
+    "Honsyokin2",
+    "Honsyokin3",
+    "HaronTimeS3",
+    "HaronTimeS4",
+    "HaronTimeL3",
+    "HaronTimeL4",
+    "HassoTime",
+    "TorokuTosu",
+    "SyussoTosu",
+    "NyusenTosu",
+    "Wakuban",
+    "Umaban",
+    "Barei",
+    "Futan",
+    "BaTaijyu",
+    "ZogenSa",
+    "NyusenJyuni",
+    "KakuteiJyuni",
+    "Time",
+    "Jyuni1c",
+    "Jyuni2c",
+    "Jyuni3c",
+    "Jyuni4c",
+    "Odds",
+    "Ninki",
+]
+FEATURE_COLS = [
+    "JyoCD",
+    "Kaiji",
+    "Nichiji",
+    "RaceNum",
+    "YoubiCD",
+    "GradeCD",
+    "JyuryoCD",
+    "JyokenCD1",
+    "JyokenCD2",
+    "JyokenCD3",
+    "JyokenCD4",
+    "JyokenCD5",
+    "Kyori",
+    "DistanceBucket",
+    "TrackCD",
+    "CourseKubunCD",
+    "HassoTime",
+    "TorokuTosu",
+    "SyussoTosu",
+    "NyusenTosu",
+    "TenkoCD",
+    "SibaBabaCD",
+    "DirtBabaCD",
+    "TenkoBaba",
+    "Wakuban",
+    "Umaban",
+    "UmaKigoCD",
+    "SexCD",
+    "HinsyuCD",
+    "KeiroCD",
+    "Barei",
+    "TozaiCD",
+    "ChokyosiCode",
+    "BanusiCode",
+    "Futan",
+    "KisyuCode",
+    "MinaraiCD",
+    "BaTaijyu",
+    "ZogenSa",
+    "HorseStartsBefore",
+    "HorseWinRateBefore",
+    "HorseTop3RateBefore",
+    "HorseAvgFinishBefore",
+    "HorseAvgFinishPctBefore",
+    "HorseDaysSinceLastRace",
+    "HorseDistanceChange",
+    "HorseLast3Starts",
+    "HorseLast3WinRate",
+    "HorseLast3Top3Rate",
+    "HorseLast3AvgFinish",
+    "HorseLast3BestFinish",
+    "HorseLast3FinishStd",
+    "HorseLast3Top3Count",
+    "HorseLast3AvgFinishPct",
+    "HorseLast1Finish",
+    "HorseLast1FinishPct",
+    "HorseLast1ToLast3Gap",
+    "HorseSameVenueStartsBefore",
+    "HorseSameVenueWinRateBefore",
+    "HorseSameVenueTop3RateBefore",
+    "HorseSameDistanceStartsBefore",
+    "HorseSameDistanceWinRateBefore",
+    "HorseSameDistanceTop3RateBefore",
+    "HorseDistanceBucketStartsBefore",
+    "HorseDistanceBucketWinRateBefore",
+    "HorseDistanceBucketTop3RateBefore",
+    "HorseJockeyStartsBefore",
+    "HorseJockeyWinRateBefore",
+    "HorseJockeyTop3RateBefore",
+    "JockeyStartsBefore",
+    "JockeyWinRateBefore",
+    "JockeyTop3RateBefore",
+    "JockeyWinRateSmoothBefore",
+    "JockeyTop3RateSmoothBefore",
+    "JockeyVenueStartsBefore",
+    "JockeyVenueWinRateBefore",
+    "JockeyVenueTop3RateBefore",
+    "JockeySameDistanceStartsBefore",
+    "JockeySameDistanceWinRateBefore",
+    "JockeySameDistanceTop3RateBefore",
+    "JockeyDistanceBucketStartsBefore",
+    "JockeyDistanceBucketWinRateBefore",
+    "JockeyDistanceBucketTop3RateBefore",
+    "TrainerStartsBefore",
+    "TrainerWinRateBefore",
+    "TrainerTop3RateBefore",
+    "TrainerWinRateSmoothBefore",
+    "TrainerTop3RateSmoothBefore",
+    "TrainerDistanceBucketStartsBefore",
+    "TrainerDistanceBucketWinRateBefore",
+    "TrainerDistanceBucketTop3RateBefore",
+    "TrainerJockeyStartsBefore",
+    "TrainerJockeyWinRateBefore",
+    "TrainerJockeyTop3RateBefore",
+    "OwnerStartsBefore",
+    "OwnerWinRateSmoothBefore",
+    "OwnerTop3RateSmoothBefore",
+]
+WH_FEATURE_COLS = [
+    "WHAvailable",
+    "WHHappyoTimeMinutes",
+    "WHBaTaijyu",
+    "WHZogenSa",
+    "WHZogenSaAbs",
+    "WHBaTaijyuDiffFromSE",
+    "WHZogenSaDiffFromSE",
+]
+HC_FEATURE_COLS = [
+    "HCHasRecent14d",
+    "HCCount7d",
+    "HCCount14d",
+    "HCLastDaysAgo",
+    "HCLastHaronTime4",
+    "HCLastHaronTime3",
+    "HCLastHaronTime2",
+    "HCLastLapTime1",
+    "HCLastTresenKubun",
+]
+WC_FEATURE_COLS = [
+    "WCHasRecent14d",
+    "WCCount7d",
+    "WCCount14d",
+    "WCLastDaysAgo",
+    "WCLastHaronTime5",
+    "WCLastHaronTime4",
+    "WCLastHaronTime3",
+    "WCLastLapTime1",
+    "WCLastCourse",
+    "WCLastBabaAround",
+    "WCLastTresenKubun",
+]
+SMOOTHING_PRIOR_WEIGHT = 20.0
+
+
+def _available_cols(frame: pd.DataFrame, columns: list[str]) -> list[str]:
+    return [column for column in columns if column in frame.columns]
+
+
+def _normalize_history_key(series: pd.Series) -> pd.Series:
+    normalized = series.astype("string").str.strip()
+    return normalized.mask(normalized.isna() | normalized.eq("") | normalized.str.fullmatch(r"0+"))
+
+
+def _bucket_distance(distance: object) -> str | None:
+    if pd.isna(distance):
+        return None
+    distance_int = int(distance)
+    if distance_int <= 1400:
+        return "SHORT"
+    if distance_int <= 1800:
+        return "MILE"
+    if distance_int <= 2200:
+        return "MIDDLE"
+    return "LONG"
+
+
+def _parse_mdhm_to_minutes(value: object) -> int:
+    if pd.isna(value):
+        return 0
+    text = str(value).strip()
+    if len(text) < 4 or not text[-4:].isdigit():
+        return 0
+    hour = int(text[-4:-2])
+    minute = int(text[-2:])
+    return hour * 60 + minute
+
+
+def _signed_numeric(value: pd.Series, sign: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(value, errors="coerce")
+    sign_text = sign.astype("string").fillna("").str.strip()
+    return numeric.where(sign_text.ne("-"), -numeric)
+
+
+def _reshape_wh_records(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=RACE_KEY_COLS + ["Umaban", "HappyoTime", "WHBaTaijyu", "WHZogenFugo", "WHZogenSa", "WHAvailable"]
+        )
+
+    horse_rows = []
+    base_cols = RACE_KEY_COLS + _available_cols(frame, WH_BASE_COLS)
+    for index in range(18):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["Umaban"] = frame.get(f"Umaban{item_no}")
+        part["WHBaTaijyu"] = frame.get(f"BaTaijyu{item_no}")
+        part["WHZogenFugo"] = frame.get(f"ZogenFugo{item_no}")
+        part["WHZogenSa"] = frame.get(f"ZogenSa{item_no}")
+        part = part.loc[part["Umaban"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["Umaban"].astype("string").str.strip().ne("00")]
+        part["WHAvailable"] = 1
+        horse_rows.append(part)
+
+    if not horse_rows:
+        return pd.DataFrame(
+            columns=RACE_KEY_COLS + ["Umaban", "HappyoTime", "WHBaTaijyu", "WHZogenFugo", "WHZogenSa", "WHAvailable"]
+        )
+
+    reshaped = pd.concat(horse_rows, ignore_index=True, sort=False)
+    return _deduplicate_by_key(reshaped, RACE_KEY_COLS + ["Umaban"], "WH")
+
+
+def _prepare_workout_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=columns + ["WorkoutDate", "_HorseHistoryKey", "_WorkoutOrder"])
+
+    result = frame[_available_cols(frame, columns)].copy()
+    if "ChokyoDate" in result.columns:
+        result["WorkoutDate"] = pd.to_datetime(result["ChokyoDate"], format="%Y%m%d", errors="coerce")
+    else:
+        result["WorkoutDate"] = pd.NaT
+    result["_HorseHistoryKey"] = _normalize_history_key(result.get("KettoNum", pd.Series(dtype="string")))
+    result["_WorkoutOrder"] = pd.to_numeric(result.get("ChokyoTime"), errors="coerce").fillna(0)
+    return result
+
+
+def _merge_workout_features(
+    frame: pd.DataFrame,
+    workouts: pd.DataFrame,
+    prefix: str,
+    latest_numeric_fields: list[str],
+    latest_categorical_fields: list[str],
+) -> pd.DataFrame:
+    result = frame.copy()
+    default_numeric = {
+        f"{prefix}HasRecent14d": 0.0,
+        f"{prefix}Count7d": 0.0,
+        f"{prefix}Count14d": 0.0,
+        f"{prefix}LastDaysAgo": 0.0,
+    }
+    default_numeric.update({f"{prefix}Last{field}": 0.0 for field in latest_numeric_fields})
+    default_categorical = {f"{prefix}Last{field}": "UNKNOWN" for field in latest_categorical_fields}
+
+    for column, value in default_numeric.items():
+        result[column] = value
+    for column, value in default_categorical.items():
+        result[column] = value
+
+    if workouts.empty:
+        return result
+
+    valid = workouts.loc[workouts["_HorseHistoryKey"].notna() & workouts["WorkoutDate"].notna()].copy()
+    if valid.empty:
+        return result
+
+    for field in latest_numeric_fields:
+        if field in valid.columns:
+            valid[field] = pd.to_numeric(valid[field], errors="coerce")
+    valid = valid.sort_values(["_HorseHistoryKey", "WorkoutDate", "_WorkoutOrder"], kind="stable").reset_index(drop=True)
+
+    grouped_workouts = {key: grp.reset_index(drop=True) for key, grp in valid.groupby("_HorseHistoryKey", sort=False)}
+    race_groups = result.loc[result["_HorseHistoryKey"].notna() & result["RaceDate"].notna()].groupby("_HorseHistoryKey", sort=False)
+
+    for horse_key, indexer in race_groups.groups.items():
+        workouts_for_horse = grouped_workouts.get(horse_key)
+        if workouts_for_horse is None or workouts_for_horse.empty:
+            continue
+
+        race_rows = result.loc[indexer].sort_values("RaceDate")
+        race_dates = race_rows["RaceDate"].to_numpy(dtype="datetime64[ns]")
+        workout_dates = workouts_for_horse["WorkoutDate"].to_numpy(dtype="datetime64[ns]")
+        insert_pos = np.searchsorted(workout_dates, race_dates, side="left")
+        latest_idx = insert_pos - 1
+        start7 = np.searchsorted(workout_dates, race_dates - np.timedelta64(7, "D"), side="left")
+        start14 = np.searchsorted(workout_dates, race_dates - np.timedelta64(14, "D"), side="left")
+
+        valid_latest = latest_idx >= 0
+        row_index = race_rows.index.to_numpy()
+
+        result.loc[row_index, f"{prefix}Count7d"] = (insert_pos - start7).astype(float)
+        result.loc[row_index, f"{prefix}Count14d"] = (insert_pos - start14).astype(float)
+        result.loc[row_index, f"{prefix}HasRecent14d"] = (insert_pos - start14 > 0).astype(float)
+
+        if valid_latest.any():
+            latest_dates = workout_dates[latest_idx[valid_latest]]
+            days_ago = (race_dates[valid_latest] - latest_dates).astype("timedelta64[D]").astype(int)
+            valid_row_index = row_index[valid_latest]
+            result.loc[valid_row_index, f"{prefix}LastDaysAgo"] = days_ago.astype(float)
+
+            for field in latest_numeric_fields:
+                if field not in workouts_for_horse.columns:
+                    continue
+                values = workouts_for_horse[field].fillna(0).to_numpy()
+                result.loc[valid_row_index, f"{prefix}Last{field}"] = values[latest_idx[valid_latest]]
+
+            for field in latest_categorical_fields:
+                if field not in workouts_for_horse.columns:
+                    continue
+                values = workouts_for_horse[field].astype("string").fillna("UNKNOWN").to_numpy(dtype=object)
+                result.loc[valid_row_index, f"{prefix}Last{field}"] = values[latest_idx[valid_latest]]
+
+    return result
+
+
+def _add_external_features(
+    frame: pd.DataFrame,
+    wh_frame: pd.DataFrame,
+    hc_frame: pd.DataFrame,
+    wc_frame: pd.DataFrame,
+    include_wh: bool,
+    include_hc: bool,
+    include_wc: bool,
+) -> pd.DataFrame:
+    result = frame.copy()
+    result["_HorseHistoryKey"] = _normalize_history_key(result["KettoNum"])
+
+    if include_wh:
+        if wh_frame.empty:
+            for col in WH_FEATURE_COLS:
+                result[col] = 0
+        else:
+            wh_long = _reshape_wh_records(wh_frame)
+            wh_long["Umaban"] = pd.to_numeric(wh_long["Umaban"], errors="coerce")
+            result = result.merge(
+                wh_long[RACE_KEY_COLS + ["Umaban", "HappyoTime", "WHBaTaijyu", "WHZogenFugo", "WHZogenSa", "WHAvailable"]],
+                on=RACE_KEY_COLS + ["Umaban"],
+                how="left",
+            )
+            result["WHBaTaijyu"] = pd.to_numeric(result["WHBaTaijyu"], errors="coerce")
+            result["WHZogenSa"] = _signed_numeric(result["WHZogenSa"], result["WHZogenFugo"])
+            result["WHHappyoTimeMinutes"] = result["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            result["WHAvailable"] = pd.to_numeric(result["WHAvailable"], errors="coerce").fillna(0)
+            result["WHZogenSaAbs"] = result["WHZogenSa"].abs()
+            result["WHBaTaijyuDiffFromSE"] = result["WHBaTaijyu"] - pd.to_numeric(result["BaTaijyu"], errors="coerce")
+            result["WHZogenSaDiffFromSE"] = result["WHZogenSa"] - pd.to_numeric(result["ZogenSa"], errors="coerce")
+            for col in WH_FEATURE_COLS:
+                result[col] = pd.to_numeric(result[col], errors="coerce").fillna(0)
+            result = result.drop(columns=["HappyoTime", "WHZogenFugo"], errors="ignore")
+
+    if include_hc:
+        hc_workouts = _prepare_workout_frame(hc_frame, HC_CONTEXT_COLS)
+        result = _merge_workout_features(
+            result,
+            hc_workouts,
+            "HC",
+            latest_numeric_fields=["HaronTime4", "HaronTime3", "HaronTime2", "LapTime1"],
+            latest_categorical_fields=["TresenKubun"],
+        )
+
+    if include_wc:
+        wc_workouts = _prepare_workout_frame(wc_frame, WC_CONTEXT_COLS)
+        result = _merge_workout_features(
+            result,
+            wc_workouts,
+            "WC",
+            latest_numeric_fields=["HaronTime5", "HaronTime4", "HaronTime3", "LapTime1"],
+            latest_categorical_fields=["Course", "BabaAround", "TresenKubun"],
+        )
+
+    return result.drop(columns=["_HorseHistoryKey"], errors="ignore")
+
+
+def _deduplicate_by_key(frame: pd.DataFrame, key_cols: list[str], label: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    dedupe_keys = [column for column in key_cols if column in frame.columns]
+    if not dedupe_keys:
+        return frame.copy()
+
+    ranked = frame.copy()
+    ranked["_source_order"] = range(len(ranked))
+    ranked["_completeness"] = ranked.replace("", pd.NA).notna().sum(axis=1)
+    ranked = ranked.sort_values(
+        ["_completeness", "_source_order"],
+        ascending=[False, False],
+        kind="stable",
+    )
+    deduped = ranked.drop_duplicates(subset=dedupe_keys, keep="first")
+    dropped = len(frame) - len(deduped)
+    if dropped:
+        print(f"Deduplicated {dropped} {label} row(s) by key: {dedupe_keys}")
+    return (
+        deduped.sort_values("_source_order", kind="stable")
+        .drop(columns=["_source_order", "_completeness"])
+        .reset_index(drop=True)
+    )
+
+
+def _merge_history_features(
+    frame: pd.DataFrame,
+    history: pd.DataFrame,
+    key_cols: str | list[str],
+    feature_cols: list[str],
+) -> pd.DataFrame:
+    if history.empty:
+        for col in feature_cols:
+            frame[col] = 0
+        return frame
+
+    join_cols = [key_cols] if isinstance(key_cols, str) else list(key_cols)
+    return frame.merge(
+        history[join_cols + ["RaceDate"] + feature_cols],
+        on=join_cols + ["RaceDate"],
+        how="left",
+    )
+
+
+def _build_rate_history(
+    frame: pd.DataFrame,
+    key_col: str,
+    prefix: str,
+    include_average_finish: bool = False,
+    include_average_finish_pct: bool = False,
+) -> pd.DataFrame:
+    valid = frame.loc[frame[key_col].notna() & frame["RaceDate"].notna()].copy()
+    if include_average_finish_pct and "FinishPct" in valid.columns:
+        valid["FinishPct"] = pd.to_numeric(valid["FinishPct"], errors="coerce")
+    if valid.empty:
+        columns = [key_col, "RaceDate", f"{prefix}StartsBefore", f"{prefix}WinRateBefore", f"{prefix}Top3RateBefore"]
+        if include_average_finish:
+            columns.append(f"{prefix}AvgFinishBefore")
+        if include_average_finish_pct:
+            columns.append(f"{prefix}AvgFinishPctBefore")
+        return pd.DataFrame(columns=columns)
+
+    aggregations = {
+        "starts": ("TargetWin", "size"),
+        "wins": ("TargetWin", "sum"),
+        "top3": ("TargetTop3", "sum"),
+        "finish_sum": ("KakuteiJyuni", "sum"),
+    }
+    if include_average_finish_pct:
+        aggregations["finish_pct_sum"] = ("FinishPct", "sum")
+
+    grouped = (
+        valid.groupby([key_col, "RaceDate"], as_index=False, dropna=False)
+        .agg(**aggregations)
+        .sort_values([key_col, "RaceDate"], kind="stable")
+        .reset_index(drop=True)
+    )
+
+    grouped[f"{prefix}StartsBefore"] = grouped.groupby(key_col, dropna=False)["starts"].cumsum() - grouped["starts"]
+    wins_before = grouped.groupby(key_col, dropna=False)["wins"].cumsum() - grouped["wins"]
+    top3_before = grouped.groupby(key_col, dropna=False)["top3"].cumsum() - grouped["top3"]
+    starts_before = grouped[f"{prefix}StartsBefore"].replace(0, pd.NA)
+    grouped[f"{prefix}WinRateBefore"] = wins_before / starts_before
+    grouped[f"{prefix}Top3RateBefore"] = top3_before / starts_before
+
+    if include_average_finish:
+        finish_before = grouped.groupby(key_col, dropna=False)["finish_sum"].cumsum() - grouped["finish_sum"]
+        grouped[f"{prefix}AvgFinishBefore"] = finish_before / starts_before
+    if include_average_finish_pct:
+        finish_pct_before = grouped.groupby(key_col, dropna=False)["finish_pct_sum"].cumsum() - grouped["finish_pct_sum"]
+        grouped[f"{prefix}AvgFinishPctBefore"] = finish_pct_before / starts_before
+
+    return grouped
+
+
+def _add_recent_form_features(
+    history: pd.DataFrame,
+    key_col: str,
+    prefix: str,
+    window: int = 3,
+    include_finish_pct_features: bool = False,
+) -> pd.DataFrame:
+    result = history.copy()
+    if result.empty:
+        for col in [
+            f"{prefix}Last3Starts",
+            f"{prefix}Last3WinRate",
+            f"{prefix}Last3Top3Rate",
+            f"{prefix}Last3AvgFinish",
+            f"{prefix}Last3BestFinish",
+            f"{prefix}Last3FinishStd",
+            f"{prefix}Last3Top3Count",
+            f"{prefix}Last1Finish",
+            f"{prefix}Last1ToLast3Gap",
+        ]:
+            result[col] = pd.Series(dtype="float64")
+        if include_finish_pct_features:
+            for col in [f"{prefix}Last3AvgFinishPct", f"{prefix}Last1FinishPct"]:
+                result[col] = pd.Series(dtype="float64")
+        return result
+
+    grouped = result.groupby(key_col, dropna=False)
+    result["_PrevStarts"] = grouped["starts"].shift(1)
+    result["_PrevWins"] = grouped["wins"].shift(1)
+    result["_PrevTop3"] = grouped["top3"].shift(1)
+    result["_PrevFinishSum"] = grouped["finish_sum"].shift(1)
+    if include_finish_pct_features:
+        result["_PrevFinishPctSum"] = grouped["finish_pct_sum"].shift(1)
+
+    recent_starts = (
+        result.groupby(key_col, dropna=False)["_PrevStarts"]
+        .rolling(window, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+    recent_wins = (
+        result.groupby(key_col, dropna=False)["_PrevWins"]
+        .rolling(window, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+    recent_top3 = (
+        result.groupby(key_col, dropna=False)["_PrevTop3"]
+        .rolling(window, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+    recent_finish = (
+        result.groupby(key_col, dropna=False)["_PrevFinishSum"]
+        .rolling(window, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+    recent_best_finish = (
+        result.groupby(key_col, dropna=False)["_PrevFinishSum"]
+        .rolling(window, min_periods=1)
+        .min()
+        .reset_index(level=0, drop=True)
+    )
+    recent_finish_std = (
+        result.groupby(key_col, dropna=False)["_PrevFinishSum"]
+        .rolling(window, min_periods=1)
+        .std(ddof=0)
+        .reset_index(level=0, drop=True)
+    )
+    if include_finish_pct_features:
+        recent_finish_pct = (
+            result.groupby(key_col, dropna=False)["_PrevFinishPctSum"]
+            .rolling(window, min_periods=1)
+            .sum()
+            .reset_index(level=0, drop=True)
+        )
+
+    starts_denom = recent_starts.replace(0, pd.NA)
+    result[f"{prefix}Last3Starts"] = recent_starts.fillna(0)
+    result[f"{prefix}Last3WinRate"] = recent_wins / starts_denom
+    result[f"{prefix}Last3Top3Rate"] = recent_top3 / starts_denom
+    result[f"{prefix}Last3AvgFinish"] = recent_finish / starts_denom
+    result[f"{prefix}Last3BestFinish"] = recent_best_finish.fillna(0)
+    result[f"{prefix}Last3FinishStd"] = recent_finish_std.fillna(0)
+    result[f"{prefix}Last3Top3Count"] = recent_top3.fillna(0)
+    result[f"{prefix}Last1Finish"] = result["_PrevFinishSum"].fillna(0)
+    result[f"{prefix}Last1ToLast3Gap"] = result[f"{prefix}Last1Finish"] - result[f"{prefix}Last3AvgFinish"].fillna(0)
+    if include_finish_pct_features:
+        result[f"{prefix}Last3AvgFinishPct"] = recent_finish_pct / starts_denom
+        result[f"{prefix}Last1FinishPct"] = result["_PrevFinishPctSum"].fillna(0)
+
+    drop_cols = ["_PrevStarts", "_PrevWins", "_PrevTop3", "_PrevFinishSum"]
+    if include_finish_pct_features:
+        drop_cols.append("_PrevFinishPctSum")
+    return result.drop(columns=drop_cols)
+
+
+def _build_context_rate_history(
+    frame: pd.DataFrame,
+    key_cols: list[str],
+    prefix: str,
+) -> pd.DataFrame:
+    valid = frame.copy()
+    for column in key_cols:
+        valid = valid.loc[valid[column].notna()]
+    valid = valid.loc[valid["RaceDate"].notna()]
+
+    if valid.empty:
+        return pd.DataFrame(
+            columns=key_cols
+            + [
+                "RaceDate",
+                f"{prefix}StartsBefore",
+                f"{prefix}WinRateBefore",
+                f"{prefix}Top3RateBefore",
+            ]
+        )
+
+    grouped = (
+        valid.groupby(key_cols + ["RaceDate"], as_index=False, dropna=False)
+        .agg(
+            starts=("TargetWin", "size"),
+            wins=("TargetWin", "sum"),
+            top3=("TargetTop3", "sum"),
+        )
+        .sort_values(key_cols + ["RaceDate"], kind="stable")
+        .reset_index(drop=True)
+    )
+
+    grouped[f"{prefix}StartsBefore"] = grouped.groupby(key_cols, dropna=False)["starts"].cumsum() - grouped["starts"]
+    wins_before = grouped.groupby(key_cols, dropna=False)["wins"].cumsum() - grouped["wins"]
+    top3_before = grouped.groupby(key_cols, dropna=False)["top3"].cumsum() - grouped["top3"]
+    starts_before = grouped[f"{prefix}StartsBefore"].replace(0, pd.NA)
+    grouped[f"{prefix}WinRateBefore"] = wins_before / starts_before
+    grouped[f"{prefix}Top3RateBefore"] = top3_before / starts_before
+    return grouped
+
+
+def _build_global_rate_priors(frame: pd.DataFrame) -> pd.DataFrame:
+    valid = frame.loc[frame["RaceDate"].notna()].copy()
+    if valid.empty:
+        return pd.DataFrame(
+            columns=[
+                "RaceDate",
+                "GlobalStartsBefore",
+                "GlobalWinRateBefore",
+                "GlobalTop3RateBefore",
+            ]
+        )
+
+    grouped = (
+        valid.groupby("RaceDate", as_index=False, dropna=False)
+        .agg(
+            starts=("TargetWin", "size"),
+            wins=("TargetWin", "sum"),
+            top3=("TargetTop3", "sum"),
+        )
+        .sort_values("RaceDate", kind="stable")
+        .reset_index(drop=True)
+    )
+
+    grouped["GlobalStartsBefore"] = grouped["starts"].cumsum() - grouped["starts"]
+    wins_before = grouped["wins"].cumsum() - grouped["wins"]
+    top3_before = grouped["top3"].cumsum() - grouped["top3"]
+    starts_before = grouped["GlobalStartsBefore"].replace(0, pd.NA)
+    grouped["GlobalWinRateBefore"] = wins_before / starts_before
+    grouped["GlobalTop3RateBefore"] = top3_before / starts_before
+    return grouped
+
+
+def _build_smoothed_rate_history(
+    frame: pd.DataFrame,
+    key_col: str,
+    prefix: str,
+    global_priors: pd.DataFrame,
+    include_starts: bool = False,
+    smoothing_prior_weight: float = SMOOTHING_PRIOR_WEIGHT,
+) -> pd.DataFrame:
+    valid = frame.loc[frame[key_col].notna() & frame["RaceDate"].notna()].copy()
+    feature_cols = [f"{prefix}WinRateSmoothBefore", f"{prefix}Top3RateSmoothBefore"]
+    if include_starts:
+        feature_cols.insert(0, f"{prefix}StartsBefore")
+    if valid.empty:
+        return pd.DataFrame(columns=[key_col, "RaceDate"] + feature_cols)
+
+    grouped = (
+        valid.groupby([key_col, "RaceDate"], as_index=False, dropna=False)
+        .agg(
+            starts=("TargetWin", "size"),
+            wins=("TargetWin", "sum"),
+            top3=("TargetTop3", "sum"),
+        )
+        .sort_values([key_col, "RaceDate"], kind="stable")
+        .reset_index(drop=True)
+    )
+
+    starts_before_col = f"{prefix}StartsBefore"
+    grouped[starts_before_col] = grouped.groupby(key_col, dropna=False)["starts"].cumsum() - grouped["starts"]
+    wins_before = grouped.groupby(key_col, dropna=False)["wins"].cumsum() - grouped["wins"]
+    top3_before = grouped.groupby(key_col, dropna=False)["top3"].cumsum() - grouped["top3"]
+    grouped = grouped.merge(
+        global_priors[["RaceDate", "GlobalWinRateBefore", "GlobalTop3RateBefore"]],
+        on="RaceDate",
+        how="left",
+    )
+
+    global_win_rate = grouped["GlobalWinRateBefore"].fillna(0)
+    global_top3_rate = grouped["GlobalTop3RateBefore"].fillna(0)
+    denominator = grouped[starts_before_col] + smoothing_prior_weight
+    grouped[f"{prefix}WinRateSmoothBefore"] = (wins_before + smoothing_prior_weight * global_win_rate) / denominator
+    grouped[f"{prefix}Top3RateSmoothBefore"] = (top3_before + smoothing_prior_weight * global_top3_rate) / denominator
+
+    return grouped[[key_col, "RaceDate"] + feature_cols]
+
+
+def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True).copy()
+    frame["_HorseHistoryKey"] = _normalize_history_key(frame["KettoNum"])
+    frame["_JockeyHistoryKey"] = _normalize_history_key(frame["KisyuCode"])
+    frame["_TrainerHistoryKey"] = _normalize_history_key(frame["ChokyosiCode"])
+    frame["_OwnerHistoryKey"] = _normalize_history_key(frame["BanusiCode"])
+    global_priors = _build_global_rate_priors(frame)
+
+    horse_history = _build_rate_history(
+        frame,
+        "_HorseHistoryKey",
+        "Horse",
+        include_average_finish=True,
+        include_average_finish_pct=True,
+    )
+    horse_history = _add_recent_form_features(
+        horse_history,
+        "_HorseHistoryKey",
+        "Horse",
+        include_finish_pct_features=True,
+    )
+    horse_daily = (
+        frame.loc[frame["_HorseHistoryKey"].notna() & frame["RaceDate"].notna(), ["_HorseHistoryKey", "RaceDate", "Kyori"]]
+        .sort_values(["_HorseHistoryKey", "RaceDate"], kind="stable")
+        .drop_duplicates(subset=["_HorseHistoryKey", "RaceDate"], keep="last")
+        .reset_index(drop=True)
+    )
+    if not horse_daily.empty:
+        prev_race_date = horse_daily.groupby("_HorseHistoryKey", dropna=False)["RaceDate"].shift(1)
+        prev_distance = horse_daily.groupby("_HorseHistoryKey", dropna=False)["Kyori"].shift(1)
+        horse_daily["HorseDaysSinceLastRace"] = (horse_daily["RaceDate"] - prev_race_date).dt.days
+        horse_daily["HorseDistanceChange"] = horse_daily["Kyori"] - prev_distance
+        horse_history = horse_history.merge(
+            horse_daily[["_HorseHistoryKey", "RaceDate", "HorseDaysSinceLastRace", "HorseDistanceChange"]],
+            on=["_HorseHistoryKey", "RaceDate"],
+            how="left",
+        )
+
+    frame = _merge_history_features(
+        frame,
+        horse_history,
+        "_HorseHistoryKey",
+        [
+            "HorseStartsBefore",
+            "HorseWinRateBefore",
+            "HorseTop3RateBefore",
+            "HorseAvgFinishBefore",
+            "HorseAvgFinishPctBefore",
+            "HorseDaysSinceLastRace",
+            "HorseDistanceChange",
+            "HorseLast3Starts",
+            "HorseLast3WinRate",
+            "HorseLast3Top3Rate",
+            "HorseLast3AvgFinish",
+            "HorseLast3BestFinish",
+            "HorseLast3FinishStd",
+            "HorseLast3Top3Count",
+            "HorseLast3AvgFinishPct",
+            "HorseLast1Finish",
+            "HorseLast1FinishPct",
+            "HorseLast1ToLast3Gap",
+        ],
+    )
+
+    horse_same_venue = _build_context_rate_history(frame, ["_HorseHistoryKey", "JyoCD"], "HorseSameVenue")
+    frame = _merge_history_features(
+        frame,
+        horse_same_venue,
+        ["_HorseHistoryKey", "JyoCD"],
+        ["HorseSameVenueStartsBefore", "HorseSameVenueWinRateBefore", "HorseSameVenueTop3RateBefore"],
+    )
+
+    horse_same_distance = _build_context_rate_history(frame, ["_HorseHistoryKey", "Kyori"], "HorseSameDistance")
+    frame = _merge_history_features(
+        frame,
+        horse_same_distance,
+        ["_HorseHistoryKey", "Kyori"],
+        ["HorseSameDistanceStartsBefore", "HorseSameDistanceWinRateBefore", "HorseSameDistanceTop3RateBefore"],
+    )
+
+    horse_distance_bucket = _build_context_rate_history(
+        frame,
+        ["_HorseHistoryKey", "DistanceBucket"],
+        "HorseDistanceBucket",
+    )
+    frame = _merge_history_features(
+        frame,
+        horse_distance_bucket,
+        ["_HorseHistoryKey", "DistanceBucket"],
+        ["HorseDistanceBucketStartsBefore", "HorseDistanceBucketWinRateBefore", "HorseDistanceBucketTop3RateBefore"],
+    )
+
+    horse_jockey_history = _build_context_rate_history(
+        frame,
+        ["_HorseHistoryKey", "_JockeyHistoryKey"],
+        "HorseJockey",
+    )
+    frame = _merge_history_features(
+        frame,
+        horse_jockey_history,
+        ["_HorseHistoryKey", "_JockeyHistoryKey"],
+        ["HorseJockeyStartsBefore", "HorseJockeyWinRateBefore", "HorseJockeyTop3RateBefore"],
+    )
+
+    jockey_history = _build_rate_history(frame, "_JockeyHistoryKey", "Jockey")
+    frame = _merge_history_features(
+        frame,
+        jockey_history,
+        "_JockeyHistoryKey",
+        ["JockeyStartsBefore", "JockeyWinRateBefore", "JockeyTop3RateBefore"],
+    )
+    jockey_smoothed = _build_smoothed_rate_history(frame, "_JockeyHistoryKey", "Jockey", global_priors)
+    frame = _merge_history_features(
+        frame,
+        jockey_smoothed,
+        "_JockeyHistoryKey",
+        ["JockeyWinRateSmoothBefore", "JockeyTop3RateSmoothBefore"],
+    )
+
+    jockey_same_venue = _build_context_rate_history(frame, ["_JockeyHistoryKey", "JyoCD"], "JockeyVenue")
+    frame = _merge_history_features(
+        frame,
+        jockey_same_venue,
+        ["_JockeyHistoryKey", "JyoCD"],
+        ["JockeyVenueStartsBefore", "JockeyVenueWinRateBefore", "JockeyVenueTop3RateBefore"],
+    )
+
+    jockey_same_distance = _build_context_rate_history(frame, ["_JockeyHistoryKey", "Kyori"], "JockeySameDistance")
+    frame = _merge_history_features(
+        frame,
+        jockey_same_distance,
+        ["_JockeyHistoryKey", "Kyori"],
+        ["JockeySameDistanceStartsBefore", "JockeySameDistanceWinRateBefore", "JockeySameDistanceTop3RateBefore"],
+    )
+
+    jockey_distance_bucket = _build_context_rate_history(
+        frame,
+        ["_JockeyHistoryKey", "DistanceBucket"],
+        "JockeyDistanceBucket",
+    )
+    frame = _merge_history_features(
+        frame,
+        jockey_distance_bucket,
+        ["_JockeyHistoryKey", "DistanceBucket"],
+        ["JockeyDistanceBucketStartsBefore", "JockeyDistanceBucketWinRateBefore", "JockeyDistanceBucketTop3RateBefore"],
+    )
+
+    trainer_history = _build_rate_history(frame, "_TrainerHistoryKey", "Trainer")
+    frame = _merge_history_features(
+        frame,
+        trainer_history,
+        "_TrainerHistoryKey",
+        ["TrainerStartsBefore", "TrainerWinRateBefore", "TrainerTop3RateBefore"],
+    )
+    trainer_smoothed = _build_smoothed_rate_history(frame, "_TrainerHistoryKey", "Trainer", global_priors)
+    frame = _merge_history_features(
+        frame,
+        trainer_smoothed,
+        "_TrainerHistoryKey",
+        ["TrainerWinRateSmoothBefore", "TrainerTop3RateSmoothBefore"],
+    )
+
+    trainer_distance_bucket = _build_context_rate_history(
+        frame,
+        ["_TrainerHistoryKey", "DistanceBucket"],
+        "TrainerDistanceBucket",
+    )
+    frame = _merge_history_features(
+        frame,
+        trainer_distance_bucket,
+        ["_TrainerHistoryKey", "DistanceBucket"],
+        ["TrainerDistanceBucketStartsBefore", "TrainerDistanceBucketWinRateBefore", "TrainerDistanceBucketTop3RateBefore"],
+    )
+
+    trainer_jockey_history = _build_context_rate_history(
+        frame,
+        ["_TrainerHistoryKey", "_JockeyHistoryKey"],
+        "TrainerJockey",
+    )
+    frame = _merge_history_features(
+        frame,
+        trainer_jockey_history,
+        ["_TrainerHistoryKey", "_JockeyHistoryKey"],
+        ["TrainerJockeyStartsBefore", "TrainerJockeyWinRateBefore", "TrainerJockeyTop3RateBefore"],
+    )
+
+    owner_smoothed = _build_smoothed_rate_history(
+        frame,
+        "_OwnerHistoryKey",
+        "Owner",
+        global_priors,
+        include_starts=True,
+    )
+    frame = _merge_history_features(
+        frame,
+        owner_smoothed,
+        "_OwnerHistoryKey",
+        ["OwnerStartsBefore", "OwnerWinRateSmoothBefore", "OwnerTop3RateSmoothBefore"],
+    )
+
+    fill_zero_cols = [
+        "HorseStartsBefore",
+        "HorseWinRateBefore",
+        "HorseTop3RateBefore",
+        "HorseAvgFinishBefore",
+        "HorseAvgFinishPctBefore",
+        "HorseDaysSinceLastRace",
+        "HorseDistanceChange",
+        "HorseLast3Starts",
+        "HorseLast3WinRate",
+        "HorseLast3Top3Rate",
+        "HorseLast3AvgFinish",
+        "HorseLast3BestFinish",
+        "HorseLast3FinishStd",
+        "HorseLast3Top3Count",
+        "HorseLast3AvgFinishPct",
+        "HorseLast1Finish",
+        "HorseLast1FinishPct",
+        "HorseLast1ToLast3Gap",
+        "HorseSameVenueStartsBefore",
+        "HorseSameVenueWinRateBefore",
+        "HorseSameVenueTop3RateBefore",
+        "HorseSameDistanceStartsBefore",
+        "HorseSameDistanceWinRateBefore",
+        "HorseSameDistanceTop3RateBefore",
+        "HorseDistanceBucketStartsBefore",
+        "HorseDistanceBucketWinRateBefore",
+        "HorseDistanceBucketTop3RateBefore",
+        "HorseJockeyStartsBefore",
+        "HorseJockeyWinRateBefore",
+        "HorseJockeyTop3RateBefore",
+        "JockeyStartsBefore",
+        "JockeyWinRateBefore",
+        "JockeyTop3RateBefore",
+        "JockeyWinRateSmoothBefore",
+        "JockeyTop3RateSmoothBefore",
+        "JockeyVenueStartsBefore",
+        "JockeyVenueWinRateBefore",
+        "JockeyVenueTop3RateBefore",
+        "JockeySameDistanceStartsBefore",
+        "JockeySameDistanceWinRateBefore",
+        "JockeySameDistanceTop3RateBefore",
+        "JockeyDistanceBucketStartsBefore",
+        "JockeyDistanceBucketWinRateBefore",
+        "JockeyDistanceBucketTop3RateBefore",
+        "TrainerStartsBefore",
+        "TrainerWinRateBefore",
+        "TrainerTop3RateBefore",
+        "TrainerWinRateSmoothBefore",
+        "TrainerTop3RateSmoothBefore",
+        "TrainerDistanceBucketStartsBefore",
+        "TrainerDistanceBucketWinRateBefore",
+        "TrainerDistanceBucketTop3RateBefore",
+        "TrainerJockeyStartsBefore",
+        "TrainerJockeyWinRateBefore",
+        "TrainerJockeyTop3RateBefore",
+        "OwnerStartsBefore",
+        "OwnerWinRateSmoothBefore",
+        "OwnerTop3RateSmoothBefore",
+    ]
+    for col in fill_zero_cols:
+        frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
+
+    return frame.drop(columns=["_HorseHistoryKey", "_JockeyHistoryKey", "_TrainerHistoryKey", "_OwnerHistoryKey"])
+
+
+def make_dataset(
+    raw_dir=DEFAULT_RAW_DIR,
+    output_dir=DEFAULT_OUTPUT_DIR,
+    output_filename: str = "train_data.csv",
+    include_wh: bool = False,
+    include_hc: bool = False,
+    include_wc: bool = False,
+):
+    raw_path = Path(raw_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    parser = JVParser()
+    all_data = []
+
+    files = sorted(glob.glob(str(raw_path / "*.txt")))
+    if not files:
+        print("No raw data files found.")
+        return
+
+    print(f"Found {len(files)} files.")
+
+    for fpath in files:
+        print(f"Parsing {fpath}...")
+        df = parser.parse_file(fpath)
+        if not df.empty:
+            all_data.append(df)
+
+    if not all_data:
+        print("No data parsed.")
+        return
+
+    full_df = pd.concat(all_data, ignore_index=True, sort=False)
+    exact_duplicates = int(full_df.duplicated().sum())
+    if exact_duplicates:
+        print(f"Removed {exact_duplicates} exact duplicate raw row(s).")
+        full_df = full_df.drop_duplicates().reset_index(drop=True)
+
+    df_ra = full_df[full_df["RecordSpec"] == "RA"].copy()
+    df_se = full_df[full_df["RecordSpec"] == "SE"].copy()
+    df_wh = full_df[full_df["RecordSpec"] == "WH"].copy()
+    df_hc = full_df[full_df["RecordSpec"] == "HC"].copy()
+    df_wc = full_df[full_df["RecordSpec"] == "WC"].copy()
+
+    print(f"RA records: {len(df_ra)}, SE records: {len(df_se)}")
+    if include_wh or include_hc or include_wc:
+        print(f"WH records: {len(df_wh)}, HC records: {len(df_hc)}, WC records: {len(df_wc)}")
+
+    df_ra = df_ra[RACE_KEY_COLS + _available_cols(df_ra, RACE_CONTEXT_COLS)].copy()
+    df_se = df_se[RACE_KEY_COLS + _available_cols(df_se, HORSE_CONTEXT_COLS)].copy()
+    df_ra = _deduplicate_by_key(df_ra, RACE_KEY_COLS, "RA")
+    df_se = _deduplicate_by_key(df_se, RACE_KEY_COLS + ["Umaban", "KettoNum"], "SE")
+
+    merged = pd.merge(df_se, df_ra, on=RACE_KEY_COLS, how="inner")
+    print(f"Merged records: {len(merged)}")
+
+    merged["RaceDate"] = pd.to_datetime(
+        merged["Year"].fillna("") + merged["MonthDay"].fillna(""),
+        format="%Y%m%d",
+        errors="coerce",
+    )
+    merged["RaceKey"] = (
+        merged["Year"].fillna("")
+        + merged["MonthDay"].fillna("")
+        + merged["JyoCD"].fillna("")
+        + merged["Kaiji"].fillna("")
+        + merged["Nichiji"].fillna("")
+        + merged["RaceNum"].fillna("")
+    )
+
+    for col in _available_cols(merged, NUMERIC_COLS):
+        merged[col] = pd.to_numeric(merged[col], errors="coerce")
+
+    merged["DistanceBucket"] = merged["Kyori"].apply(_bucket_distance)
+
+    if "ZogenFugo" in merged.columns and "ZogenSa" in merged.columns:
+        merged.loc[merged["ZogenFugo"] == "-", "ZogenSa"] *= -1
+
+    merged["OddsDecimal"] = merged["Odds"] / 10.0
+    merged["TargetTop3"] = (merged["KakuteiJyuni"] <= 3).astype(int)
+    merged["TargetWin"] = (merged["KakuteiJyuni"] == 1).astype(int)
+    merged["FinishPct"] = pd.to_numeric(
+        merged["KakuteiJyuni"] / merged["SyussoTosu"].replace(0, pd.NA),
+        errors="coerce",
+    )
+    merged = _add_external_features(merged, df_wh, df_hc, df_wc, include_wh, include_hc, include_wc)
+    merged = _add_historical_features(merged)
+
+    feature_cols = list(FEATURE_COLS)
+    if include_wh:
+        feature_cols.extend(WH_FEATURE_COLS)
+    if include_hc:
+        feature_cols.extend(HC_FEATURE_COLS)
+    if include_wc:
+        feature_cols.extend(WC_FEATURE_COLS)
+
+    keep_cols = [
+        "RaceKey",
+        "RaceDate",
+        "Bamei",
+        "KettoNum",
+        "OddsDecimal",
+        "Ninki",
+        "KakuteiJyuni",
+        "TargetTop3",
+        "TargetWin",
+    ] + feature_cols
+    keep_cols = [col for col in keep_cols if col in merged.columns]
+
+    final_df = merged[keep_cols]
+    final_df = _deduplicate_by_key(final_df, ["RaceKey", "Umaban", "KettoNum"], "final dataset")
+    final_df = final_df.dropna(
+        subset=["RaceDate", "KakuteiJyuni", "TargetTop3", "TargetWin"] + feature_cols
+    )
+    final_df = final_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
+
+    train_path = output_path / output_filename
+    final_df.to_csv(train_path, index=False)
+    print(f"Saved dataset to {train_path}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Build processed training datasets from raw JV-Link text files.")
+    parser.add_argument("--raw-dir", default=str(DEFAULT_RAW_DIR), help="Directory containing raw text files")
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for processed CSV output")
+    parser.add_argument("--output-filename", default="train_data.csv", help="Output CSV filename")
+    parser.add_argument("--include-wh", action="store_true", help="Include WH body-weight bulletin features")
+    parser.add_argument("--include-hc", action="store_true", help="Include HC hanro workout features")
+    parser.add_argument("--include-wc", action="store_true", help="Include WC wood-chip workout features")
+    args = parser.parse_args()
+
+    make_dataset(
+        raw_dir=args.raw_dir,
+        output_dir=args.output_dir,
+        output_filename=args.output_filename,
+        include_wh=args.include_wh,
+        include_hc=args.include_hc,
+        include_wc=args.include_wc,
+    )
