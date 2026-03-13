@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
 RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
+NON_ACCUMULATED_JVOPEN_SPECS = {"RACERCVN"}
 JVOPEN_SPEC_MAP = {
     # These are record IDs inside the race-card dataspec, not standalone JVOpen dataspecs.
     "WH": "RACERCVN",
@@ -89,6 +90,29 @@ def resolve_dataspec(dataspec: str) -> tuple[str, str | None]:
     return jvopen_spec, record_spec_filter
 
 
+def validate_dataspec_request(
+    requested_spec: str,
+    jvopen_spec: str,
+    start_date: str,
+    end_date: str,
+    effective_option: int,
+) -> None:
+    if jvopen_spec not in NON_ACCUMULATED_JVOPEN_SPECS:
+        return
+
+    if effective_option != 2:
+        raise ValueError(
+            f"{requested_spec} is fetched through {jvopen_spec}, which is a non-accumulated race-day dataspec. "
+            "Use --option 2 instead of setup-mode options."
+        )
+
+    if start_date != end_date:
+        raise ValueError(
+            f"{requested_spec} is fetched through {jvopen_spec}, which is intended for race-day / current-distribution access. "
+            "Historical date-range backfill is not supported by this fetch helper. Use a single target date with --option 2."
+        )
+
+
 def explain_jvopen_error(code: int) -> str:
     if code == -111:
         return (
@@ -146,6 +170,9 @@ def fetch_data(
             client.set_save_path(str(save_path))
 
         effective_option = normalize_option(start_date, end_date, option)
+        if record_spec_filter is not None and option is None:
+            effective_option = 2
+        validate_dataspec_request(requested_spec, jvopen_spec, start_date, end_date, effective_option)
         period_str = build_jvopen_from_time(start_date, end_date, effective_option)
         logger.info(
             "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",

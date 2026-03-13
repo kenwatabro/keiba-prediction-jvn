@@ -10,7 +10,7 @@ DATA_LOADER_DIR = PROJECT_ROOT / "src" / "data_loader"
 sys.path.insert(0, str(DATA_LOADER_DIR))
 
 import fetch_raw_data  # noqa: E402
-from fetch_raw_data import build_jvopen_from_time, normalize_option, resolve_dataspec  # noqa: E402
+from fetch_raw_data import build_jvopen_from_time, normalize_option, resolve_dataspec, validate_dataspec_request  # noqa: E402
 from record_filter import extract_record_date, should_keep_line  # noqa: E402
 
 
@@ -39,6 +39,14 @@ class FetchRawDataTests(unittest.TestCase):
         self.assertEqual(resolve_dataspec("WH"), ("RACERCVN", "WH"))
         self.assertEqual(resolve_dataspec("JC"), ("RACERCVN", "JC"))
         self.assertEqual(resolve_dataspec("RACE"), ("RACE", None))
+
+    def test_validate_dataspec_request_rejects_setup_mode_for_race_day_streams(self):
+        with self.assertRaisesRegex(ValueError, "Use --option 2"):
+            validate_dataspec_request("WH", "RACERCVN", "20240101", "20240101", 3)
+
+    def test_validate_dataspec_request_rejects_date_ranges_for_race_day_streams(self):
+        with self.assertRaisesRegex(ValueError, "Historical date-range backfill is not supported"):
+            validate_dataspec_request("WH", "RACERCVN", "20240101", "20240131", 2)
 
     def test_fetch_data_closes_client_after_success(self):
         with TemporaryDirectory() as tmpdir:
@@ -90,15 +98,16 @@ class FetchRawDataTests(unittest.TestCase):
             )
             with patch.object(fetch_raw_data, "JVLinkClient", return_value=client):
                 path = fetch_raw_data.fetch_data(
-                    "20240101",
-                    "20240131",
+                    "20240106",
+                    "20240106",
                     dataspec="WH",
                     output_dir=tmpdir,
                     overwrite=True,
                 )
 
             self.assertEqual(client.open_calls[0]["dataspec"], "RACERCVN")
-            self.assertEqual(path.name, "WH_20240101_20240131.txt")
+            self.assertEqual(client.open_calls[0]["options"], 2)
+            self.assertEqual(path.name, "WH_20240106_20240106.txt")
             lines = path.read_text(encoding="cp932").splitlines()
             self.assertEqual(lines, ["WH" + " " * 9 + "20240106" + "rest"])
 
