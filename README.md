@@ -83,6 +83,7 @@ Examples:
 python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_race_day_batch.py --start 20260301 --end 20260314 --spec WH --out D:\jra-van-raw --save-path D:\JVLinkData --continue-on-error
 ```
 
 ```bash
