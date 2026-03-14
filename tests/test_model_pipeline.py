@@ -12,8 +12,13 @@ MODEL_DIR = PROJECT_ROOT / "src" / "model"
 sys.path.insert(0, str(MODEL_DIR))
 
 from predictor import predict  # noqa: E402
-from temporal_evaluate import select_period, summarize_race_pick_diagnostics  # noqa: E402
-from trainer import build_feature_metadata_path, filter_by_date_range, train_model  # noqa: E402
+from temporal_evaluate import (  # noqa: E402
+    filter_eval_races_by_any_positive_columns,
+    select_period,
+    summarize_race_pick_diagnostics,
+    summarize_selective_policy,
+)
+from trainer import build_feature_metadata_path, filter_by_date_range, select_feature_columns, train_model  # noqa: E402
 
 
 def build_training_dataframe() -> pd.DataFrame:
@@ -265,6 +270,183 @@ class ModelPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(float(diagnostics["agreement_metrics"]["win_return_rate"]), 300.0)
         self.assertAlmostEqual(float(diagnostics["disagreement_metrics"]["win_return_rate"]), 500.0)
         self.assertAlmostEqual(float(diagnostics["top_pick_margin_mean"]), 0.35)
+
+    def test_summarize_selective_policy_picks_validation_best_rule_and_applies_it_to_test(self):
+        validation_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 5.0,
+                    "Ninki": 2,
+                    "Score": 0.90,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.75,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.80,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 6.0,
+                    "Ninki": 2,
+                    "Score": 0.78,
+                },
+                {
+                    "RaceKey": "R3",
+                    "RaceDate": pd.Timestamp("2024-01-03"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 0,
+                    "OddsDecimal": 2.5,
+                    "Ninki": 1,
+                    "Score": 0.55,
+                },
+                {
+                    "RaceKey": "R3",
+                    "RaceDate": pd.Timestamp("2024-01-03"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 8.0,
+                    "Ninki": 2,
+                    "Score": 0.70,
+                },
+            ]
+        )
+        test_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 2,
+                    "Score": 0.88,
+                },
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.76,
+                },
+                {
+                    "RaceKey": "T2",
+                    "RaceDate": pd.Timestamp("2025-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.82,
+                },
+                {
+                    "RaceKey": "T2",
+                    "RaceDate": pd.Timestamp("2025-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 6.0,
+                    "Ninki": 2,
+                    "Score": 0.80,
+                },
+                {
+                    "RaceKey": "T3",
+                    "RaceDate": pd.Timestamp("2025-01-03"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 0,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.52,
+                },
+                {
+                    "RaceKey": "T3",
+                    "RaceDate": pd.Timestamp("2025-01-03"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 10.0,
+                    "Ninki": 2,
+                    "Score": 0.72,
+                },
+            ]
+        )
+
+        summary = summarize_selective_policy(
+            validation_df,
+            test_df,
+            "Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=1,
+        )
+
+        self.assertEqual(summary["validation_best_policy"]["policy_name"], "disagreement_only")
+        self.assertEqual(int(summary["test_applied_policy"]["bet_count"]), 2)
+        self.assertAlmostEqual(float(summary["test_applied_policy"]["metrics"]["win_return_rate"]), 200.0)
+        self.assertAlmostEqual(float(summary["test_applied_policy"]["selection_rate"]), 2 / 3)
+
+    def test_filter_eval_races_by_any_positive_columns_keeps_full_races(self):
+        frame = pd.DataFrame(
+            [
+                {"RaceKey": "R1", "Umaban": 1, "WHAvailable": 1},
+                {"RaceKey": "R1", "Umaban": 2, "WHAvailable": 0},
+                {"RaceKey": "R2", "Umaban": 1, "WHAvailable": 0},
+                {"RaceKey": "R2", "Umaban": 2, "WHAvailable": 0},
+                {"RaceKey": "R3", "Umaban": 1, "WHAvailable": 2},
+            ]
+        )
+
+        filtered = filter_eval_races_by_any_positive_columns(frame, ["WHAvailable"])
+
+        self.assertEqual(filtered["RaceKey"].tolist(), ["R1", "R1", "R3"])
+        self.assertEqual(filtered["Umaban"].tolist(), [1, 2, 1])
+
+    def test_select_feature_columns_can_exclude_prefixes(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": "2024-01-01",
+                    "BaseFeature": 1.0,
+                    "WHAvailable": 1.0,
+                    "WCHasRecent14d": 0.0,
+                    "TargetWin": 1,
+                }
+            ]
+        )
+
+        features = select_feature_columns(frame, "TargetWin", exclude_prefixes=["WH", "WC"])
+
+        self.assertEqual(features, ["BaseFeature"])
 
 
 if __name__ == "__main__":

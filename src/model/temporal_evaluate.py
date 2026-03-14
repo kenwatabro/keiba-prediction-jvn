@@ -1,4 +1,5 @@
 import argparse
+import math
 import json
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from trainer import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 RACE_KEY_COLS = ["RaceKey"]
+SELECTIVE_MARGIN_THRESHOLDS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
+SELECTIVE_SCORE_THRESHOLDS = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
 
 
 def build_model_picks(eval_df: pd.DataFrame, score_col: str) -> pd.DataFrame:
@@ -29,6 +32,29 @@ def build_model_picks(eval_df: pd.DataFrame, score_col: str) -> pd.DataFrame:
         .groupby(RACE_KEY_COLS, as_index=False)
         .first()
     )
+
+
+def build_race_pick_frame(eval_df: pd.DataFrame, score_col: str) -> pd.DataFrame:
+    sorted_df = eval_df.sort_values(["RaceDate", "RaceKey", score_col], ascending=[True, True, False])
+    picks = sorted_df.groupby(RACE_KEY_COLS, as_index=False).first().copy()
+    picks["TopPickScore"] = pd.to_numeric(picks[score_col], errors="coerce").fillna(0.0)
+
+    top_two = sorted_df.groupby("RaceKey", sort=False)[score_col].apply(lambda scores: scores.head(2).tolist())
+    top_pick_margins = top_two.apply(lambda scores: float(scores[0] - scores[1]) if len(scores) > 1 else 0.0)
+    picks["TopPickMargin"] = picks["RaceKey"].map(top_pick_margins).fillna(0.0)
+
+    favorite_picks = (
+        eval_df.sort_values(["RaceDate", "RaceKey", "Ninki", "OddsDecimal"], ascending=[True, True, True, True])
+        .groupby(RACE_KEY_COLS, as_index=False)
+        .first()
+    )
+    picks = picks.merge(
+        favorite_picks[["RaceKey", "Umaban"]].rename(columns={"Umaban": "FavoriteUmaban"}),
+        on="RaceKey",
+        how="left",
+    )
+    picks["AgreesWithFavorite"] = picks["Umaban"] == picks["FavoriteUmaban"]
+    return picks
 
 
 def summarize_binary_metrics(
@@ -45,7 +71,7 @@ def summarize_binary_metrics(
 
 
 def summarize_race_picks(eval_df: pd.DataFrame, score_col: str) -> dict[str, float]:
-    picks = build_model_picks(eval_df, score_col)
+    picks = build_race_pick_frame(eval_df, score_col)
     bet_count = len(picks)
     returned = float((picks.loc[picks["TargetWin"] == 1, "OddsDecimal"] * 100).sum())
     stake = bet_count * 100
@@ -87,31 +113,130 @@ def _summarize_pick_subset(picks: pd.DataFrame) -> dict[str, float]:
 
 
 def summarize_race_pick_diagnostics(eval_df: pd.DataFrame, score_col: str) -> dict[str, float | dict[str, float]]:
-    model_picks = build_model_picks(eval_df, score_col)
-    favorite_picks = (
-        eval_df.sort_values(["RaceDate", "RaceKey", "Ninki", "OddsDecimal"], ascending=[True, True, True, True])
-        .groupby(RACE_KEY_COLS, as_index=False)
-        .first()
-    )
-    comparison = model_picks.merge(
-        favorite_picks[["RaceKey", "Umaban"]].rename(columns={"Umaban": "FavoriteUmaban"}),
-        on="RaceKey",
-        how="left",
-    )
-    comparison["AgreesWithFavorite"] = comparison["Umaban"] == comparison["FavoriteUmaban"]
-
-    sorted_df = eval_df.sort_values(["RaceDate", "RaceKey", score_col], ascending=[True, True, False])
-    top_two = sorted_df.groupby("RaceKey", sort=False)[score_col].apply(lambda scores: scores.head(2).tolist())
-    top_pick_margins = top_two.apply(lambda scores: float(scores[0] - scores[1]) if len(scores) > 1 else 0.0)
-
-    agreement_picks = comparison.loc[comparison["AgreesWithFavorite"]]
-    disagreement_picks = comparison.loc[~comparison["AgreesWithFavorite"]]
+    picks = build_race_pick_frame(eval_df, score_col)
+    agreement_picks = picks.loc[picks["AgreesWithFavorite"]]
+    disagreement_picks = picks.loc[~picks["AgreesWithFavorite"]]
     return {
-        "favorite_agreement_rate": float(comparison["AgreesWithFavorite"].mean()) if len(comparison) else 0.0,
+        "favorite_agreement_rate": float(picks["AgreesWithFavorite"].mean()) if len(picks) else 0.0,
         "agreement_metrics": _summarize_pick_subset(agreement_picks),
         "disagreement_metrics": _summarize_pick_subset(disagreement_picks),
-        "top_pick_margin_mean": float(top_pick_margins.mean()) if len(top_pick_margins) else 0.0,
-        "top_pick_margin_median": float(top_pick_margins.median()) if len(top_pick_margins) else 0.0,
+        "top_pick_margin_mean": float(picks["TopPickMargin"].mean()) if len(picks) else 0.0,
+        "top_pick_margin_median": float(picks["TopPickMargin"].median()) if len(picks) else 0.0,
+    }
+
+
+def _selective_policy_name(policy: dict[str, object]) -> str:
+    if policy.get("disagreement_only") and policy.get("margin_threshold") is not None:
+        return "disagreement_margin"
+    if policy.get("disagreement_only"):
+        return "disagreement_only"
+    if policy.get("score_threshold") is not None:
+        return "score_only"
+    if policy.get("margin_threshold") is not None:
+        return "margin_only"
+    return "all_races"
+
+
+def _iter_selective_policies() -> list[dict[str, object]]:
+    policies: list[dict[str, object]] = [{}]
+    policies.append({"disagreement_only": True})
+    policies.extend({"margin_threshold": threshold} for threshold in SELECTIVE_MARGIN_THRESHOLDS)
+    policies.extend(
+        {"disagreement_only": True, "margin_threshold": threshold} for threshold in SELECTIVE_MARGIN_THRESHOLDS
+    )
+    policies.extend({"score_threshold": threshold} for threshold in SELECTIVE_SCORE_THRESHOLDS)
+    return policies
+
+
+def _apply_selective_policy(picks: pd.DataFrame, policy: dict[str, object]) -> pd.DataFrame:
+    selected = picks.copy()
+    if policy.get("disagreement_only"):
+        selected = selected.loc[~selected["AgreesWithFavorite"]]
+    margin_threshold = policy.get("margin_threshold")
+    if margin_threshold is not None:
+        selected = selected.loc[selected["TopPickMargin"] >= float(margin_threshold)]
+    score_threshold = policy.get("score_threshold")
+    if score_threshold is not None:
+        selected = selected.loc[selected["TopPickScore"] >= float(score_threshold)]
+    return selected.copy()
+
+
+def _evaluate_selective_policies(picks: pd.DataFrame) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    total_races = len(picks)
+    for policy in _iter_selective_policies():
+        selected = _apply_selective_policy(picks, policy)
+        metrics = _summarize_pick_subset(selected)
+        results.append(
+            {
+                "policy_name": _selective_policy_name(policy),
+                "bet_count": len(selected),
+                "selection_rate": float(len(selected) / total_races) if total_races else 0.0,
+                "margin_threshold": policy.get("margin_threshold"),
+                "score_threshold": policy.get("score_threshold"),
+                "disagreement_only": bool(policy.get("disagreement_only", False)),
+                "metrics": metrics,
+            }
+        )
+    return results
+
+
+def summarize_selective_policy(
+    validation_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    score_col: str,
+    min_bets_ratio: float = 0.05,
+    min_bets_floor: int = 100,
+) -> dict[str, object]:
+    validation_picks = build_race_pick_frame(validation_df, score_col)
+    test_picks = build_race_pick_frame(test_df, score_col)
+    validation_results = _evaluate_selective_policies(validation_picks)
+    minimum_bets = min(
+        len(validation_picks),
+        max(min_bets_floor, int(math.ceil(len(validation_picks) * min_bets_ratio))),
+    ) if len(validation_picks) else 0
+    eligible = [result for result in validation_results if result["bet_count"] >= minimum_bets]
+    if not eligible:
+        eligible = validation_results
+
+    best_validation = max(
+        eligible,
+        key=lambda result: (
+            result["metrics"]["win_return_rate"],
+            result["bet_count"],
+            result["metrics"]["win_hit_rate"],
+        ),
+    )
+    selected_test = _apply_selective_policy(
+        test_picks,
+        {
+            "disagreement_only": best_validation["disagreement_only"],
+            "margin_threshold": best_validation["margin_threshold"],
+            "score_threshold": best_validation["score_threshold"],
+        },
+    )
+    return {
+        "selection_metric": "win_return_rate",
+        "minimum_validation_bets": minimum_bets,
+        "validation_best_policy": best_validation,
+        "validation_top_policies": sorted(
+            validation_results,
+            key=lambda result: (
+                result["metrics"]["win_return_rate"],
+                result["bet_count"],
+                result["metrics"]["win_hit_rate"],
+            ),
+            reverse=True,
+        )[:5],
+        "test_applied_policy": {
+            "policy_name": best_validation["policy_name"],
+            "bet_count": len(selected_test),
+            "selection_rate": float(len(selected_test) / len(test_picks)) if len(test_picks) else 0.0,
+            "margin_threshold": best_validation["margin_threshold"],
+            "score_threshold": best_validation["score_threshold"],
+            "disagreement_only": best_validation["disagreement_only"],
+            "metrics": _summarize_pick_subset(selected_test),
+        },
     }
 
 
@@ -137,6 +262,15 @@ def score_period(
 ) -> dict:
     scored = period_df.copy()
     scored[score_col] = booster.predict(cast_categoricals(scored, feature_columns))
+    return summarize_scored_period(scored, target_col, score_col, objective_name)
+
+
+def summarize_scored_period(
+    scored: pd.DataFrame,
+    target_col: str,
+    score_col: str,
+    objective_name: str,
+) -> dict:
     return {
         "rows": len(scored),
         "races": int(scored["RaceKey"].nunique()),
@@ -147,6 +281,28 @@ def score_period(
         "race_pick_diagnostics": summarize_race_pick_diagnostics(scored, score_col),
         "favorite_baseline": summarize_favorite_baseline(scored),
     }
+
+
+def filter_eval_races_by_any_positive_columns(df: pd.DataFrame, column_names: list[str]) -> pd.DataFrame:
+    if not column_names:
+        return df.copy()
+
+    missing_columns = [column for column in column_names if column not in df.columns]
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"Evaluation subset columns not found: {missing}")
+
+    eligible_races: pd.Series | None = None
+    for column in column_names:
+        race_has_positive = (
+            pd.to_numeric(df[column], errors="coerce")
+            .fillna(0)
+            .groupby(df["RaceKey"], sort=False)
+            .transform(lambda values: values.gt(0).any())
+        )
+        eligible_races = race_has_positive if eligible_races is None else (eligible_races & race_has_positive)
+
+    return df.loc[eligible_races].reset_index(drop=True)
 
 
 def train_and_evaluate_target(
@@ -161,8 +317,15 @@ def train_and_evaluate_target(
     validation_end: str | None,
     test_start: str | None,
     test_end: str | None,
+    exclude_feature_prefixes: list[str] | None = None,
+    eval_race_any_positive_columns: list[str] | None = None,
 ) -> dict:
-    feature_columns = select_feature_columns(df, target_col, drop_raw_ids=drop_raw_ids)
+    feature_columns = select_feature_columns(
+        df,
+        target_col,
+        drop_raw_ids=drop_raw_ids,
+        exclude_prefixes=exclude_feature_prefixes,
+    )
     train_df = select_period(df, "train", train_start, train_end)
     validation_df = select_period(df, "validation", validation_start, validation_end)
     test_df = select_period(df, "test", test_start, test_end)
@@ -213,24 +376,42 @@ def train_and_evaluate_target(
     )
 
     score_col = f"{target_col}Score"
+    validation_scored = validation_df.copy()
+    validation_scored[score_col] = tuning_booster.predict(cast_categoricals(validation_scored, feature_columns))
+    test_scored = test_df.copy()
+    test_scored[score_col] = final_booster.predict(cast_categoricals(test_scored, feature_columns))
+    validation_eval = filter_eval_races_by_any_positive_columns(
+        validation_scored,
+        eval_race_any_positive_columns or [],
+    )
+    test_eval = filter_eval_races_by_any_positive_columns(
+        test_scored,
+        eval_race_any_positive_columns or [],
+    )
+    if validation_eval.empty:
+        raise ValueError(
+            "No validation races remain after evaluation subset filtering: "
+            f"columns={eval_race_any_positive_columns or []}"
+        )
+    if test_eval.empty:
+        raise ValueError(
+            "No test races remain after evaluation subset filtering: "
+            f"columns={eval_race_any_positive_columns or []}"
+        )
     return {
         "target": target_col,
         "objective_name": objective_name,
         "drop_raw_ids": drop_raw_ids,
         "model_path": str(final_model_path),
         "feature_count": len(feature_columns),
+        "excluded_feature_prefixes": list(exclude_feature_prefixes or []),
+        "evaluation_subset_any_positive_columns": list(eval_race_any_positive_columns or []),
         "train_rows": len(train_df),
         "tuning_rounds": tuning_booster.best_iteration or tuning_booster.current_iteration(),
-        "validation": score_period(
-            tuning_booster,
-            validation_df,
-            feature_columns,
-            target_col,
-            score_col,
-            objective_name,
-        ),
+        "validation": summarize_scored_period(validation_eval, target_col, score_col, objective_name),
         "final_train_rows": len(final_training_df),
-        "test": score_period(final_booster, test_df, feature_columns, target_col, score_col, objective_name),
+        "test": summarize_scored_period(test_eval, target_col, score_col, objective_name),
+        "selective_policy": summarize_selective_policy(validation_eval, test_eval, score_col),
     }
 
 
@@ -269,6 +450,18 @@ def main() -> None:
         action="store_true",
         help="Exclude raw owner/jockey/trainer ID columns from the feature set.",
     )
+    parser.add_argument(
+        "--exclude-feature-prefix",
+        action="append",
+        default=[],
+        help="Feature prefix to exclude from training and evaluation. Repeatable.",
+    )
+    parser.add_argument(
+        "--eval-race-any-positive-column",
+        action="append",
+        default=[],
+        help="Keep only races where the given column is positive for at least one runner. Repeatable.",
+    )
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -303,6 +496,8 @@ def main() -> None:
             args.validation_end,
             args.test_start,
             args.test_end,
+            exclude_feature_prefixes=args.exclude_feature_prefix,
+            eval_race_any_positive_columns=args.eval_race_any_positive_column,
         )
         result["win_model"] = train_and_evaluate_target(
             df,
@@ -316,6 +511,8 @@ def main() -> None:
             args.validation_end,
             args.test_start,
             args.test_end,
+            exclude_feature_prefixes=args.exclude_feature_prefix,
+            eval_race_any_positive_columns=args.eval_race_any_positive_column,
         )
     except ValueError as exc:
         result["error"] = str(exc)

@@ -75,10 +75,17 @@ def load_training_frame(data_path: Path) -> pd.DataFrame:
     return df
 
 
-def select_feature_columns(df: pd.DataFrame, target_col: str, drop_raw_ids: bool = False) -> list[str]:
+def select_feature_columns(
+    df: pd.DataFrame,
+    target_col: str,
+    drop_raw_ids: bool = False,
+    exclude_prefixes: list[str] | None = None,
+) -> list[str]:
     features = [col for col in df.columns if col not in NON_FEATURE_COLS and col != target_col]
     if drop_raw_ids:
         features = [col for col in features if col not in RAW_ID_FEATURE_COLS]
+    if exclude_prefixes:
+        features = [col for col in features if not any(col.startswith(prefix) for prefix in exclude_prefixes)]
     return features
 
 

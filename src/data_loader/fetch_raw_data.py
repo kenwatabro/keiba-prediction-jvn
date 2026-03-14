@@ -7,6 +7,20 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
+RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
+NON_ACCUMULATED_JVOPEN_SPECS = {"RACERCVN"}
+JVOPEN_SPEC_MAP = {
+    # These are record IDs inside the race-card dataspec, not standalone JVOpen dataspecs.
+    "WH": "RACERCVN",
+    "WE": "RACERCVN",
+    "AV": "RACERCVN",
+    "JC": "RACERCVN",
+    "TC": "RACERCVN",
+    "CC": "RACERCVN",
+    # Workout record IDs are distributed through their workout dataspecs.
+    "HC": "SLOP",
+    "WC": "WOOD",
+}
 
 # Add src to path to import jvlink_client
 sys.path.append(str(SRC_ROOT))
@@ -72,7 +86,43 @@ def build_jvopen_from_time(start_date: str, end_date: str, option: int) -> str:
     return start_time
 
 
+def resolve_dataspec(dataspec: str) -> tuple[str, str | None]:
+    requested_spec = dataspec.upper()
+    jvopen_spec = JVOPEN_SPEC_MAP.get(requested_spec, requested_spec)
+    record_spec_filter = requested_spec if requested_spec in RACE_DAY_RECORD_SPECS else None
+    return jvopen_spec, record_spec_filter
+
+
+def validate_dataspec_request(
+    requested_spec: str,
+    jvopen_spec: str,
+    start_date: str,
+    end_date: str,
+    effective_option: int,
+) -> None:
+    if jvopen_spec not in NON_ACCUMULATED_JVOPEN_SPECS:
+        return
+
+    if effective_option != 2:
+        raise ValueError(
+            f"{requested_spec} is fetched through {jvopen_spec}, which is a non-accumulated race-day dataspec. "
+            "Use --option 2 instead of setup-mode options."
+        )
+
+    if start_date != end_date:
+        raise ValueError(
+            f"{requested_spec} is fetched through {jvopen_spec}, which is intended for race-day / current-distribution access. "
+            "Historical date-range backfill is not supported by this fetch helper. Use a single target date with --option 2."
+        )
+
+
 def explain_jvopen_error(code: int) -> str:
+    if code == -111:
+        return (
+            "JVOpen failed with code -111. This usually means the dataspec or its parameters are invalid. "
+            "Some record IDs such as WH/WE/AV/JC/TC/CC are not standalone JVOpen dataspecs and must be read "
+            "through the race-card dataspec (for example RACERCVN) and filtered locally."
+        )
     if code == -112:
         return (
             "JVERR_CONNECT (-112): JV-Link could not connect to the DataLab service. "
@@ -105,7 +155,10 @@ def fetch_data(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    filename = f"{dataspec}_{start_date}_{end_date}.txt"
+    requested_spec = dataspec.upper()
+    jvopen_spec, record_spec_filter = resolve_dataspec(requested_spec)
+
+    filename = f"{requested_spec}_{start_date}_{end_date}.txt"
     filepath = output_path / filename
 
     if filepath.exists() and filepath.stat().st_size > 0 and not overwrite:
@@ -120,8 +173,17 @@ def fetch_data(
             client.set_save_path(str(save_path))
 
         effective_option = normalize_option(start_date, end_date, option)
+        if record_spec_filter is not None and option is None:
+            effective_option = 2
+        validate_dataspec_request(requested_spec, jvopen_spec, start_date, end_date, effective_option)
         period_str = build_jvopen_from_time(start_date, end_date, effective_option)
-        logger.info("Opening dataspec=%s with from_time=%s option=%s", dataspec, period_str, effective_option)
+        logger.info(
+            "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",
+            jvopen_spec,
+            requested_spec,
+            period_str,
+            effective_option,
+        )
         if start_date != end_date and effective_option in (3, 4):
             logger.info(
                 "Using setup mode (option=%s) for historical fetch and filtering records locally to %s-%s.",
@@ -134,7 +196,10 @@ def fetch_data(
                 "Using normal mode (option=1) for a date range. This is mainly for troubleshooting; "
                 "historical backfill normally requires option 3 or 4."
             )
-        open_result = client.open_dataspec(dataspec, period_str, options=effective_option)
+        if record_spec_filter is not None:
+            logger.info("Filtering opened %s stream down to %s records.", jvopen_spec, record_spec_filter)
+
+        open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
 
         if open_result.download_count and open_result.download_count > 0:
             logger.info(
@@ -168,6 +233,8 @@ def fetch_data(
                     if not should_keep_line(line, start_date, end_date):
                         skipped_out_of_range += 1
                         continue
+                if record_spec_filter is not None and line[:2] != record_spec_filter:
+                    continue
 
                 f.write(line)
                 f.write("\n")

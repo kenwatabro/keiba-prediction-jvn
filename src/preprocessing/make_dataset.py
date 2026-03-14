@@ -260,6 +260,18 @@ WC_FEATURE_COLS = [
     "WCLastBabaAround",
     "WCLastTresenKubun",
 ]
+OUTPUT_BASE_COLS = [
+    "RaceKey",
+    "RaceDate",
+    "Bamei",
+    "KettoNum",
+    "OddsDecimal",
+    "Ninki",
+    "KakuteiJyuni",
+    "TargetTop3",
+    "TargetWin",
+    "HasResult",
+]
 SMOOTHING_PRIOR_WEIGHT = 20.0
 
 
@@ -545,14 +557,20 @@ def _build_rate_history(
             columns.append(f"{prefix}AvgFinishPctBefore")
         return pd.DataFrame(columns=columns)
 
+    start_col = "_HistoryStart" if "_HistoryStart" in valid.columns else None
+    win_col = "_HistoryWin" if "_HistoryWin" in valid.columns else "TargetWin"
+    top3_col = "_HistoryTop3" if "_HistoryTop3" in valid.columns else "TargetTop3"
+    finish_col = "_HistoryFinish" if "_HistoryFinish" in valid.columns else "KakuteiJyuni"
+    finish_pct_col = "_HistoryFinishPct" if "_HistoryFinishPct" in valid.columns else "FinishPct"
+
     aggregations = {
-        "starts": ("TargetWin", "size"),
-        "wins": ("TargetWin", "sum"),
-        "top3": ("TargetTop3", "sum"),
-        "finish_sum": ("KakuteiJyuni", "sum"),
+        "starts": (start_col, "sum") if start_col is not None else ("TargetWin", "size"),
+        "wins": (win_col, "sum"),
+        "top3": (top3_col, "sum"),
+        "finish_sum": (finish_col, "sum"),
     }
     if include_average_finish_pct:
-        aggregations["finish_pct_sum"] = ("FinishPct", "sum")
+        aggregations["finish_pct_sum"] = (finish_pct_col, "sum")
 
     grouped = (
         valid.groupby([key_col, "RaceDate"], as_index=False, dropna=False)
@@ -697,12 +715,16 @@ def _build_context_rate_history(
             ]
         )
 
+    start_col = "_HistoryStart" if "_HistoryStart" in valid.columns else None
+    win_col = "_HistoryWin" if "_HistoryWin" in valid.columns else "TargetWin"
+    top3_col = "_HistoryTop3" if "_HistoryTop3" in valid.columns else "TargetTop3"
+
     grouped = (
         valid.groupby(key_cols + ["RaceDate"], as_index=False, dropna=False)
         .agg(
-            starts=("TargetWin", "size"),
-            wins=("TargetWin", "sum"),
-            top3=("TargetTop3", "sum"),
+            starts=(start_col, "sum") if start_col is not None else ("TargetWin", "size"),
+            wins=(win_col, "sum"),
+            top3=(top3_col, "sum"),
         )
         .sort_values(key_cols + ["RaceDate"], kind="stable")
         .reset_index(drop=True)
@@ -729,12 +751,16 @@ def _build_global_rate_priors(frame: pd.DataFrame) -> pd.DataFrame:
             ]
         )
 
+    start_col = "_HistoryStart" if "_HistoryStart" in valid.columns else None
+    win_col = "_HistoryWin" if "_HistoryWin" in valid.columns else "TargetWin"
+    top3_col = "_HistoryTop3" if "_HistoryTop3" in valid.columns else "TargetTop3"
+
     grouped = (
         valid.groupby("RaceDate", as_index=False, dropna=False)
         .agg(
-            starts=("TargetWin", "size"),
-            wins=("TargetWin", "sum"),
-            top3=("TargetTop3", "sum"),
+            starts=(start_col, "sum") if start_col is not None else ("TargetWin", "size"),
+            wins=(win_col, "sum"),
+            top3=(top3_col, "sum"),
         )
         .sort_values("RaceDate", kind="stable")
         .reset_index(drop=True)
@@ -764,12 +790,16 @@ def _build_smoothed_rate_history(
     if valid.empty:
         return pd.DataFrame(columns=[key_col, "RaceDate"] + feature_cols)
 
+    start_col = "_HistoryStart" if "_HistoryStart" in valid.columns else None
+    win_col = "_HistoryWin" if "_HistoryWin" in valid.columns else "TargetWin"
+    top3_col = "_HistoryTop3" if "_HistoryTop3" in valid.columns else "TargetTop3"
+
     grouped = (
         valid.groupby([key_col, "RaceDate"], as_index=False, dropna=False)
         .agg(
-            starts=("TargetWin", "size"),
-            wins=("TargetWin", "sum"),
-            top3=("TargetTop3", "sum"),
+            starts=(start_col, "sum") if start_col is not None else ("TargetWin", "size"),
+            wins=(win_col, "sum"),
+            top3=(top3_col, "sum"),
         )
         .sort_values([key_col, "RaceDate"], kind="stable")
         .reset_index(drop=True)
@@ -800,10 +830,15 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     frame["_JockeyHistoryKey"] = _normalize_history_key(frame["KisyuCode"])
     frame["_TrainerHistoryKey"] = _normalize_history_key(frame["ChokyosiCode"])
     frame["_OwnerHistoryKey"] = _normalize_history_key(frame["BanusiCode"])
-    global_priors = _build_global_rate_priors(frame)
+    history_source = frame.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True).copy()
+    history_source["_HorseHistoryKey"] = _normalize_history_key(history_source["KettoNum"])
+    history_source["_JockeyHistoryKey"] = _normalize_history_key(history_source["KisyuCode"])
+    history_source["_TrainerHistoryKey"] = _normalize_history_key(history_source["ChokyosiCode"])
+    history_source["_OwnerHistoryKey"] = _normalize_history_key(history_source["BanusiCode"])
+    global_priors = _build_global_rate_priors(history_source)
 
     horse_history = _build_rate_history(
-        frame,
+        history_source,
         "_HorseHistoryKey",
         "Horse",
         include_average_finish=True,
@@ -816,7 +851,10 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         include_finish_pct_features=True,
     )
     horse_daily = (
-        frame.loc[frame["_HorseHistoryKey"].notna() & frame["RaceDate"].notna(), ["_HorseHistoryKey", "RaceDate", "Kyori"]]
+        history_source.loc[
+            history_source["_HorseHistoryKey"].notna() & history_source["RaceDate"].notna(),
+            ["_HorseHistoryKey", "RaceDate", "Kyori"],
+        ]
         .sort_values(["_HorseHistoryKey", "RaceDate"], kind="stable")
         .drop_duplicates(subset=["_HorseHistoryKey", "RaceDate"], keep="last")
         .reset_index(drop=True)
@@ -858,7 +896,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ],
     )
 
-    horse_same_venue = _build_context_rate_history(frame, ["_HorseHistoryKey", "JyoCD"], "HorseSameVenue")
+    horse_same_venue = _build_context_rate_history(history_source, ["_HorseHistoryKey", "JyoCD"], "HorseSameVenue")
     frame = _merge_history_features(
         frame,
         horse_same_venue,
@@ -866,7 +904,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["HorseSameVenueStartsBefore", "HorseSameVenueWinRateBefore", "HorseSameVenueTop3RateBefore"],
     )
 
-    horse_same_distance = _build_context_rate_history(frame, ["_HorseHistoryKey", "Kyori"], "HorseSameDistance")
+    horse_same_distance = _build_context_rate_history(history_source, ["_HorseHistoryKey", "Kyori"], "HorseSameDistance")
     frame = _merge_history_features(
         frame,
         horse_same_distance,
@@ -875,7 +913,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     horse_distance_bucket = _build_context_rate_history(
-        frame,
+        history_source,
         ["_HorseHistoryKey", "DistanceBucket"],
         "HorseDistanceBucket",
     )
@@ -887,7 +925,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     horse_jockey_history = _build_context_rate_history(
-        frame,
+        history_source,
         ["_HorseHistoryKey", "_JockeyHistoryKey"],
         "HorseJockey",
     )
@@ -898,14 +936,14 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["HorseJockeyStartsBefore", "HorseJockeyWinRateBefore", "HorseJockeyTop3RateBefore"],
     )
 
-    jockey_history = _build_rate_history(frame, "_JockeyHistoryKey", "Jockey")
+    jockey_history = _build_rate_history(history_source, "_JockeyHistoryKey", "Jockey")
     frame = _merge_history_features(
         frame,
         jockey_history,
         "_JockeyHistoryKey",
         ["JockeyStartsBefore", "JockeyWinRateBefore", "JockeyTop3RateBefore"],
     )
-    jockey_smoothed = _build_smoothed_rate_history(frame, "_JockeyHistoryKey", "Jockey", global_priors)
+    jockey_smoothed = _build_smoothed_rate_history(history_source, "_JockeyHistoryKey", "Jockey", global_priors)
     frame = _merge_history_features(
         frame,
         jockey_smoothed,
@@ -913,7 +951,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["JockeyWinRateSmoothBefore", "JockeyTop3RateSmoothBefore"],
     )
 
-    jockey_same_venue = _build_context_rate_history(frame, ["_JockeyHistoryKey", "JyoCD"], "JockeyVenue")
+    jockey_same_venue = _build_context_rate_history(history_source, ["_JockeyHistoryKey", "JyoCD"], "JockeyVenue")
     frame = _merge_history_features(
         frame,
         jockey_same_venue,
@@ -921,7 +959,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["JockeyVenueStartsBefore", "JockeyVenueWinRateBefore", "JockeyVenueTop3RateBefore"],
     )
 
-    jockey_same_distance = _build_context_rate_history(frame, ["_JockeyHistoryKey", "Kyori"], "JockeySameDistance")
+    jockey_same_distance = _build_context_rate_history(history_source, ["_JockeyHistoryKey", "Kyori"], "JockeySameDistance")
     frame = _merge_history_features(
         frame,
         jockey_same_distance,
@@ -930,7 +968,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     jockey_distance_bucket = _build_context_rate_history(
-        frame,
+        history_source,
         ["_JockeyHistoryKey", "DistanceBucket"],
         "JockeyDistanceBucket",
     )
@@ -941,14 +979,14 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["JockeyDistanceBucketStartsBefore", "JockeyDistanceBucketWinRateBefore", "JockeyDistanceBucketTop3RateBefore"],
     )
 
-    trainer_history = _build_rate_history(frame, "_TrainerHistoryKey", "Trainer")
+    trainer_history = _build_rate_history(history_source, "_TrainerHistoryKey", "Trainer")
     frame = _merge_history_features(
         frame,
         trainer_history,
         "_TrainerHistoryKey",
         ["TrainerStartsBefore", "TrainerWinRateBefore", "TrainerTop3RateBefore"],
     )
-    trainer_smoothed = _build_smoothed_rate_history(frame, "_TrainerHistoryKey", "Trainer", global_priors)
+    trainer_smoothed = _build_smoothed_rate_history(history_source, "_TrainerHistoryKey", "Trainer", global_priors)
     frame = _merge_history_features(
         frame,
         trainer_smoothed,
@@ -957,7 +995,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     trainer_distance_bucket = _build_context_rate_history(
-        frame,
+        history_source,
         ["_TrainerHistoryKey", "DistanceBucket"],
         "TrainerDistanceBucket",
     )
@@ -969,7 +1007,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     trainer_jockey_history = _build_context_rate_history(
-        frame,
+        history_source,
         ["_TrainerHistoryKey", "_JockeyHistoryKey"],
         "TrainerJockey",
     )
@@ -981,7 +1019,7 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
     owner_smoothed = _build_smoothed_rate_history(
-        frame,
+        history_source,
         "_OwnerHistoryKey",
         "Owner",
         global_priors,
@@ -1060,25 +1098,29 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=["_HorseHistoryKey", "_JockeyHistoryKey", "_TrainerHistoryKey", "_OwnerHistoryKey"])
 
 
-def make_dataset(
-    raw_dir=DEFAULT_RAW_DIR,
-    output_dir=DEFAULT_OUTPUT_DIR,
-    output_filename: str = "train_data.csv",
+def _feature_column_names(
     include_wh: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
-):
-    raw_path = Path(raw_dir)
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+) -> list[str]:
+    feature_cols = list(FEATURE_COLS)
+    if include_wh:
+        feature_cols.extend(WH_FEATURE_COLS)
+    if include_hc:
+        feature_cols.extend(HC_FEATURE_COLS)
+    if include_wc:
+        feature_cols.extend(WC_FEATURE_COLS)
+    return feature_cols
 
+
+def _load_raw_records(raw_path: Path) -> pd.DataFrame:
     parser = JVParser()
     all_data = []
 
     files = sorted(glob.glob(str(raw_path / "*.txt")))
     if not files:
         print("No raw data files found.")
-        return
+        return pd.DataFrame()
 
     print(f"Found {len(files)} files.")
 
@@ -1090,13 +1132,27 @@ def make_dataset(
 
     if not all_data:
         print("No data parsed.")
-        return
+        return pd.DataFrame()
 
     full_df = pd.concat(all_data, ignore_index=True, sort=False)
     exact_duplicates = int(full_df.duplicated().sum())
     if exact_duplicates:
         print(f"Removed {exact_duplicates} exact duplicate raw row(s).")
         full_df = full_df.drop_duplicates().reset_index(drop=True)
+    return full_df
+
+
+def build_feature_frame(
+    raw_dir=DEFAULT_RAW_DIR,
+    include_wh: bool = False,
+    include_hc: bool = False,
+    include_wc: bool = False,
+) -> tuple[pd.DataFrame, list[str]]:
+    raw_path = Path(raw_dir)
+    full_df = _load_raw_records(raw_path)
+    feature_cols = _feature_column_names(include_wh, include_hc, include_wc)
+    if full_df.empty:
+        return pd.DataFrame(), feature_cols
 
     df_ra = full_df[full_df["RecordSpec"] == "RA"].copy()
     df_se = full_df[full_df["RecordSpec"] == "SE"].copy()
@@ -1139,46 +1195,105 @@ def make_dataset(
         merged.loc[merged["ZogenFugo"] == "-", "ZogenSa"] *= -1
 
     merged["OddsDecimal"] = merged["Odds"] / 10.0
-    merged["TargetTop3"] = (merged["KakuteiJyuni"] <= 3).astype(int)
-    merged["TargetWin"] = (merged["KakuteiJyuni"] == 1).astype(int)
-    merged["FinishPct"] = pd.to_numeric(
-        merged["KakuteiJyuni"] / merged["SyussoTosu"].replace(0, pd.NA),
+    merged["HasResult"] = merged["KakuteiJyuni"].notna()
+    merged["TargetTop3"] = pd.Series(pd.NA, index=merged.index, dtype="Int64")
+    merged["TargetWin"] = pd.Series(pd.NA, index=merged.index, dtype="Int64")
+    merged.loc[merged["HasResult"], "TargetTop3"] = (
+        merged.loc[merged["HasResult"], "KakuteiJyuni"] <= 3
+    ).astype(int)
+    merged.loc[merged["HasResult"], "TargetWin"] = (
+        merged.loc[merged["HasResult"], "KakuteiJyuni"] == 1
+    ).astype(int)
+    merged["FinishPct"] = pd.NA
+    merged.loc[merged["HasResult"], "FinishPct"] = pd.to_numeric(
+        merged.loc[merged["HasResult"], "KakuteiJyuni"]
+        / merged.loc[merged["HasResult"], "SyussoTosu"].replace(0, pd.NA),
         errors="coerce",
     )
+    merged["_HistoryStart"] = merged["HasResult"].astype(int)
+    merged["_HistoryWin"] = merged["TargetWin"].fillna(0).astype(int)
+    merged["_HistoryTop3"] = merged["TargetTop3"].fillna(0).astype(int)
+    merged["_HistoryFinish"] = merged["KakuteiJyuni"].fillna(0)
+    merged["_HistoryFinishPct"] = pd.to_numeric(merged["FinishPct"], errors="coerce").fillna(0)
+
     merged = _add_external_features(merged, df_wh, df_hc, df_wc, include_wh, include_hc, include_wc)
     merged = _add_historical_features(merged)
 
-    feature_cols = list(FEATURE_COLS)
-    if include_wh:
-        feature_cols.extend(WH_FEATURE_COLS)
-    if include_hc:
-        feature_cols.extend(HC_FEATURE_COLS)
-    if include_wc:
-        feature_cols.extend(WC_FEATURE_COLS)
-
-    keep_cols = [
-        "RaceKey",
-        "RaceDate",
-        "Bamei",
-        "KettoNum",
-        "OddsDecimal",
-        "Ninki",
-        "KakuteiJyuni",
-        "TargetTop3",
-        "TargetWin",
-    ] + feature_cols
+    keep_cols = OUTPUT_BASE_COLS + feature_cols
     keep_cols = [col for col in keep_cols if col in merged.columns]
-
     final_df = merged[keep_cols]
     final_df = _deduplicate_by_key(final_df, ["RaceKey", "Umaban", "KettoNum"], "final dataset")
+    final_df = final_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
+    return final_df, feature_cols
+
+
+def make_dataset(
+    raw_dir=DEFAULT_RAW_DIR,
+    output_dir=DEFAULT_OUTPUT_DIR,
+    output_filename: str = "train_data.csv",
+    include_wh: bool = False,
+    include_hc: bool = False,
+    include_wc: bool = False,
+):
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    final_df, feature_cols = build_feature_frame(
+        raw_dir=raw_dir,
+        include_wh=include_wh,
+        include_hc=include_hc,
+        include_wc=include_wc,
+    )
+    if final_df.empty:
+        return
+    final_df = final_df.loc[final_df["HasResult"]].copy()
+    final_df = final_df.drop(columns=["HasResult"], errors="ignore")
     final_df = final_df.dropna(
         subset=["RaceDate", "KakuteiJyuni", "TargetTop3", "TargetWin"] + feature_cols
     )
-    final_df = final_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
 
     train_path = output_path / output_filename
     final_df.to_csv(train_path, index=False)
     print(f"Saved dataset to {train_path}")
+
+
+def make_prediction_dataset(
+    raw_dir=DEFAULT_RAW_DIR,
+    output_dir=DEFAULT_OUTPUT_DIR,
+    output_filename: str = "prediction_data.csv",
+    prediction_date: str | None = None,
+    include_wh: bool = False,
+    include_hc: bool = False,
+    include_wc: bool = False,
+):
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    prediction_df, feature_cols = build_feature_frame(
+        raw_dir=raw_dir,
+        include_wh=include_wh,
+        include_hc=include_hc,
+        include_wc=include_wc,
+    )
+    if prediction_df.empty:
+        return
+
+    prediction_df = prediction_df.loc[~prediction_df["HasResult"]].copy()
+    if prediction_date is not None:
+        target_date = pd.Timestamp(prediction_date)
+        prediction_df = prediction_df.loc[prediction_df["RaceDate"] == target_date].copy()
+
+    if prediction_df.empty:
+        print("No pending races matched the requested filters.")
+        return
+
+    prediction_df = prediction_df.dropna(subset=["RaceDate"] + feature_cols)
+    prediction_df = prediction_df.drop(columns=["HasResult", "KakuteiJyuni", "TargetTop3", "TargetWin"], errors="ignore")
+    prediction_df = prediction_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
+
+    prediction_path = output_path / output_filename
+    prediction_df.to_csv(prediction_path, index=False)
+    print(f"Saved prediction dataset to {prediction_path}")
 
 
 if __name__ == "__main__":
