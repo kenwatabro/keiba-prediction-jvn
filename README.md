@@ -70,6 +70,21 @@ If `--option` is omitted:
 - if the target raw file already exists, fetch is skipped unless `--overwrite` is specified
 - if you want JV-Link's local cache on a larger drive, add `--save-path D:\JVLinkData`
 
+Confirmed expanded fetch patterns:
+
+- historical race/result backfill: `--spec RACE --option 3`
+- race-day body-weight bulletin: `--spec WH --option 2` on a single target date
+- hanro workout history: `--spec SLOP --option 3`
+- wood-chip workout history: `--spec WOOD --option 3`
+
+Examples:
+
+```powershell
+python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
+```
+
 ```bash
 ./scripts/sync_raw_from_windows.sh /mnt/c/path/to/jra-van-data/raw data/raw
 ```
@@ -112,6 +127,23 @@ To tune on `2024` and evaluate a final model trained on `2014-2024` against `202
 ```
 This writes `data/processed/temporal_evaluation_summary.json`. If the dataset does not cover those dates yet, the command exits with a coverage error and prints the available date range.
 The current recommended pure-performance setup is `binary + --drop-raw-ids`. For comparison runs, `--objective lambdarank` is also available, but it is not the default because current validation stability and AUC are weaker than the binary setup.
+
+To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
+```bash
+./.venv/bin/python src/model/temporal_evaluate.py \
+  --data data/processed/train_data_raceday.csv \
+  --drop-raw-ids \
+  --exclude-feature-prefix WH \
+  --eval-race-any-positive-column WHAvailable \
+  --output data/processed/experiments/wh_subset_baseline_eval.json
+
+./.venv/bin/python src/model/temporal_evaluate.py \
+  --data data/processed/train_data_raceday.csv \
+  --drop-raw-ids \
+  --eval-race-any-positive-column WHAvailable \
+  --output data/processed/experiments/wh_subset_variant_eval.json
+```
+The first command trains a baseline on the same dataset while removing `WH*` columns. The second keeps the `WH*` columns. Both summaries are evaluated only on races where `WHAvailable > 0` for at least one runner.
 
 ### 3c. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:

@@ -11,7 +11,7 @@ PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
 sys.path.insert(0, str(PREPROCESSING_DIR))
 sys.path.insert(0, str((PROJECT_ROOT / "src" / "data_loader").resolve()))
 
-from make_dataset import make_dataset  # noqa: E402
+from make_dataset import make_dataset, make_prediction_dataset  # noqa: E402
 from parser import JVParser  # noqa: E402
 from record_filter import should_keep_line  # noqa: E402
 
@@ -873,6 +873,60 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(third_row["TrainerJockeyStartsBefore"]), 2.0)
             self.assertAlmostEqual(float(third_row["TrainerJockeyWinRateBefore"]), 0.5)
             self.assertAlmostEqual(float(third_row["TrainerJockeyTop3RateBefore"]), 1.0)
+
+    def test_make_prediction_dataset_keeps_pending_rows_out_of_history_targets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            output_dir = temp_root / "processed"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0106", race_num="05") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0106",
+                        race_num="05",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        kakutei_jyuni="01",
+                    )
+                    + b"\n"
+                )
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        kakutei_jyuni="  ",
+                    )
+                    + b"\n"
+                )
+
+            make_prediction_dataset(
+                raw_dir=raw_dir,
+                output_dir=output_dir,
+                output_filename="prediction_data.csv",
+                prediction_date="2024-02-03",
+            )
+
+            prediction_data = pd.read_csv(output_dir / "prediction_data.csv")
+            self.assertEqual(len(prediction_data), 1)
+            self.assertNotIn("TargetTop3", prediction_data.columns)
+            self.assertNotIn("TargetWin", prediction_data.columns)
+            self.assertEqual(float(prediction_data.loc[0, "HorseStartsBefore"]), 1.0)
+            self.assertEqual(float(prediction_data.loc[0, "HorseWinRateBefore"]), 1.0)
+            self.assertEqual(float(prediction_data.loc[0, "JockeyStartsBefore"]), 1.0)
+            self.assertEqual(float(prediction_data.loc[0, "TrainerStartsBefore"]), 1.0)
 
 
 class FetchFilterTests(unittest.TestCase):
