@@ -73,7 +73,8 @@ If `--option` is omitted:
 Confirmed expanded fetch patterns:
 
 - historical race/result backfill: `--spec RACE --option 3`
-- race-day body-weight bulletin: `--spec WH --option 2` on a single target date
+- race-day bulletin filters via realtime `0B14`: `--spec WH|WE|AV|JC|TC|CC --option 2` on a single target date
+- raw realtime snapshot: `--spec 0B14 --option 2` on a single target date
 - hanro workout history: `--spec SLOP --option 3`
 - wood-chip workout history: `--spec WOOD --option 3`
 
@@ -81,10 +82,14 @@ Examples:
 
 ```powershell
 python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20260314 --end 20260314 --spec 0B14 --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_race_day_batch.py --start 20260301 --end 20260314 --spec WH --out D:\jra-van-raw --save-path D:\JVLinkData --continue-on-error
+python fetch_realtime_snapshots.py --date 20260314 --spec 0B14 --out D:\jra-van-raw --save-path D:\JVLinkData --interval-seconds 300 --iterations 12
 ```
+
+`0B14` is realtime/current-distribution data. If you need `WH` and other bulletin families reliably, prefer the snapshot collector during race day instead of expecting later backfill to still contain the same records.
 
 ```bash
 ./scripts/sync_raw_from_windows.sh /mnt/c/path/to/jra-van-data/raw data/raw
@@ -97,15 +102,31 @@ python fetch_race_day_batch.py --start 20260301 --end 20260314 --spec WH --out D
 This creates `data/processed/train_data.csv`.
 The dataset builder now removes exact duplicate raw rows, deduplicates duplicate `RA`/`SE` keys before merge, and computes historical features from prior race dates only so same-day ordering does not leak future results.
 
-If `WH` body-weight bulletin data or `HC` / `WC` workout data has also been fetched into `data/raw/`, an alternate race-day dataset can be built explicitly:
+If race-day bulletin data or workout data has also been fetched into `data/raw/`, an alternate race-day dataset can be built explicitly:
 ```bash
 ./.venv/bin/python src/preprocessing/make_dataset.py \
   --include-wh \
+  --include-we \
+  --include-av \
+  --include-jc \
+  --include-tc \
+  --include-cc \
   --include-hc \
   --include-wc \
   --output-filename train_data_raceday.csv
 ```
-The checked-in repository currently contains only `RACE_*.txt`, so these optional columns stay inactive until `WH_*.txt`, `HC_*.txt`, and `WC_*.txt` are fetched as well.
+Supported race-day families are:
+
+- `WH` body-weight bulletin
+- `WE` weather / track-condition changes
+- `AV` scratches / cancellations
+- `JC` jockey changes
+- `TC` post-time changes
+- `CC` course changes
+- `HC` hanro workouts
+- `WC` wood-chip workouts
+
+The checked-in repository currently contains only `RACE_*.txt`, so these optional columns stay inactive until the corresponding `WH_*.txt`, `WE_*.txt`, `AV_*.txt`, `JC_*.txt`, `TC_*.txt`, `CC_*.txt`, `HC_*.txt`, and `WC_*.txt` files are fetched as well.
 
 ### 3. Train Model (Run on WSL)
 ```bash

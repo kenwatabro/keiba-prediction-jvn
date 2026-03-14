@@ -4,7 +4,7 @@ class JVParser:
     def __init__(self):
         # Offsets are taken from the bundled official VB sample structures.
         # VB uses 1-based byte offsets, so they are converted to 0-based here.
-        wh_schema = {
+        race_day_header_schema = {
             "RecordSpec": (0, 2),
             "DataKubun": (2, 1),
             "MakeDate": (3, 8),
@@ -13,8 +13,14 @@ class JVParser:
             "JyoCD": (19, 2),
             "Kaiji": (21, 2),
             "Nichiji": (23, 2),
+        }
+        race_day_race_schema = {
+            **race_day_header_schema,
             "RaceNum": (25, 2),
             "HappyoTime": (27, 8),
+        }
+        wh_schema = {
+            **race_day_race_schema,
         }
         for index in range(18):
             start = 35 + 45 * index
@@ -114,6 +120,51 @@ class JVParser:
                 "TimeDiff": (531, 4),
             },
             "WH": wh_schema,
+            "WE": {
+                **race_day_header_schema,
+                "HappyoTime": (25, 8),
+                "HenkoID": (33, 1),
+                "TenkoCD": (34, 1),
+                "SibaBabaCD": (35, 1),
+                "DirtBabaCD": (36, 1),
+                "TenkoCDBefore": (37, 1),
+                "SibaBabaCDBefore": (38, 1),
+                "DirtBabaCDBefore": (39, 1),
+            },
+            "AV": {
+                **race_day_race_schema,
+                "Umaban": (35, 2),
+                "Bamei": (37, 36),
+                "JiyuKubun": (73, 3),
+            },
+            "JC": {
+                **race_day_race_schema,
+                "Umaban": (35, 2),
+                "Bamei": (37, 36),
+                "JCAfterFutan": (73, 3),
+                "JCAfterKisyuCode": (76, 5),
+                "JCAfterKisyuName": (81, 34),
+                "JCAfterMinaraiCD": (115, 1),
+                "JCBeforeFutan": (116, 3),
+                "JCBeforeKisyuCode": (119, 5),
+                "JCBeforeKisyuName": (124, 34),
+                "JCBeforeMinaraiCD": (158, 1),
+            },
+            "TC": {
+                **race_day_race_schema,
+                "TCAfterJi": (35, 2),
+                "TCAfterFun": (37, 2),
+                "TCBeforeJi": (39, 2),
+                "TCBeforeFun": (41, 2),
+            },
+            "CC": {
+                **race_day_race_schema,
+                "CCAfterKyori": (35, 4),
+                "CCAfterTrackCD": (39, 2),
+                "CCBeforeKyori": (41, 4),
+                "CCBeforeTrackCD": (45, 2),
+                "CCJiyuCd": (47, 1),
+            },
             "HC": {
                 "RecordSpec": (0, 2),
                 "DataKubun": (2, 1),

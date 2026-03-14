@@ -12,6 +12,7 @@ DEFAULT_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 
 RACE_KEY_COLS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"]
+DAY_KEY_COLS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji"]
 RACE_CONTEXT_COLS = [
     "YoubiCD",
     "GradeCD",
@@ -74,6 +75,48 @@ HORSE_CONTEXT_COLS = [
 ]
 WH_BASE_COLS = [
     "HappyoTime",
+]
+WE_CONTEXT_COLS = [
+    "HappyoTime",
+    "HenkoID",
+    "TenkoCD",
+    "SibaBabaCD",
+    "DirtBabaCD",
+    "TenkoCDBefore",
+    "SibaBabaCDBefore",
+    "DirtBabaCDBefore",
+]
+AV_CONTEXT_COLS = [
+    "HappyoTime",
+    "Umaban",
+    "Bamei",
+    "JiyuKubun",
+]
+JC_CONTEXT_COLS = [
+    "HappyoTime",
+    "Umaban",
+    "Bamei",
+    "JCAfterFutan",
+    "JCAfterKisyuCode",
+    "JCAfterMinaraiCD",
+    "JCBeforeFutan",
+    "JCBeforeKisyuCode",
+    "JCBeforeMinaraiCD",
+]
+TC_CONTEXT_COLS = [
+    "HappyoTime",
+    "TCAfterJi",
+    "TCAfterFun",
+    "TCBeforeJi",
+    "TCBeforeFun",
+]
+CC_CONTEXT_COLS = [
+    "HappyoTime",
+    "CCAfterKyori",
+    "CCAfterTrackCD",
+    "CCBeforeKyori",
+    "CCBeforeTrackCD",
+    "CCJiyuCd",
 ]
 HC_CONTEXT_COLS = [
     "MakeDate",
@@ -236,6 +279,53 @@ WH_FEATURE_COLS = [
     "WHBaTaijyuDiffFromSE",
     "WHZogenSaDiffFromSE",
 ]
+WE_FEATURE_COLS = [
+    "WEAvailable",
+    "WEHappyoTimeMinutes",
+    "WEHenkoID",
+    "WECurrentTenkoCD",
+    "WECurrentSibaBabaCD",
+    "WECurrentDirtBabaCD",
+    "WEPreviousTenkoCD",
+    "WEPreviousSibaBabaCD",
+    "WEPreviousDirtBabaCD",
+    "WEChangedTenko",
+    "WEChangedSibaBaba",
+    "WEChangedDirtBaba",
+]
+AV_FEATURE_COLS = [
+    "AVAvailable",
+    "AVHappyoTimeMinutes",
+    "AVJiyuKubun",
+]
+JC_FEATURE_COLS = [
+    "JCAvailable",
+    "JCHappyoTimeMinutes",
+    "JCAfterFutan",
+    "JCBeforeFutan",
+    "JCFutanDiff",
+    "JCAfterKisyuCode",
+    "JCBeforeKisyuCode",
+    "JCAfterMinaraiCD",
+    "JCBeforeMinaraiCD",
+]
+TC_FEATURE_COLS = [
+    "TCAvailable",
+    "TCHappyoTimeMinutes",
+    "TCAfterHassoTimeMinutes",
+    "TCBeforeHassoTimeMinutes",
+    "TCHassoTimeDeltaMinutes",
+]
+CC_FEATURE_COLS = [
+    "CCAvailable",
+    "CCHappyoTimeMinutes",
+    "CCAfterKyori",
+    "CCBeforeKyori",
+    "CCKyoriDiff",
+    "CCAfterTrackCD",
+    "CCBeforeTrackCD",
+    "CCJiyuCd",
+]
 HC_FEATURE_COLS = [
     "HCHasRecent14d",
     "HCCount7d",
@@ -308,6 +398,16 @@ def _parse_mdhm_to_minutes(value: object) -> int:
     return hour * 60 + minute
 
 
+def _parse_hhmm_pair_to_minutes(hour: object, minute: object) -> int:
+    hour_text = str(hour).strip()
+    minute_text = str(minute).strip()
+    if len(hour_text) != 2 or len(minute_text) != 2:
+        return 0
+    if not hour_text.isdigit() or not minute_text.isdigit():
+        return 0
+    return int(hour_text) * 60 + int(minute_text)
+
+
 def _signed_numeric(value: pd.Series, sign: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(value, errors="coerce")
     sign_text = sign.astype("string").fillna("").str.strip()
@@ -339,8 +439,96 @@ def _reshape_wh_records(frame: pd.DataFrame) -> pd.DataFrame:
             columns=RACE_KEY_COLS + ["Umaban", "HappyoTime", "WHBaTaijyu", "WHZogenFugo", "WHZogenSa", "WHAvailable"]
         )
 
-    reshaped = pd.concat(horse_rows, ignore_index=True, sort=False)
-    return _deduplicate_by_key(reshaped, RACE_KEY_COLS + ["Umaban"], "WH")
+    return pd.concat(horse_rows, ignore_index=True, sort=False)
+
+
+def _prepare_announcement_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=columns + ["_AnnouncementOrder"])
+
+    result = frame[_available_cols(frame, columns)].copy()
+    result["_AnnouncementOrder"] = range(len(result))
+    return result
+
+
+def _merge_latest_announcement_features(
+    frame: pd.DataFrame,
+    announcements: pd.DataFrame,
+    key_cols: list[str],
+    numeric_feature_cols: list[str],
+    categorical_feature_cols: list[str],
+    time_feature_col: str,
+) -> pd.DataFrame:
+    result = frame.copy()
+
+    for column in numeric_feature_cols:
+        result[column] = 0.0
+    for column in categorical_feature_cols:
+        result[column] = "UNKNOWN"
+
+    if announcements.empty:
+        return result
+
+    valid_announcements = announcements.copy()
+    for column in key_cols:
+        valid_announcements = valid_announcements.loc[valid_announcements[column].notna()]
+    valid_announcements = valid_announcements.loc[pd.to_numeric(valid_announcements[time_feature_col], errors="coerce").notna()]
+    if valid_announcements.empty:
+        return result
+
+    valid_announcements = valid_announcements.sort_values(
+        key_cols + [time_feature_col, "_AnnouncementOrder"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+    grouped_announcements = {
+        key: group.reset_index(drop=True)
+        for key, group in valid_announcements.groupby(key_cols, sort=False, dropna=False)
+    }
+
+    race_rows = result.copy()
+    for column in key_cols:
+        race_rows = race_rows.loc[race_rows[column].notna()]
+    if race_rows.empty:
+        return result
+
+    race_groups = race_rows.groupby(key_cols, sort=False, dropna=False)
+    for group_key, indexer in race_groups.groups.items():
+        key = group_key if isinstance(group_key, tuple) else (group_key,)
+        announcements_for_key = grouped_announcements.get(key)
+        if announcements_for_key is None or announcements_for_key.empty:
+            continue
+
+        ordered_rows = result.loc[indexer].sort_values("_RaceHassoTimeMinutes", kind="stable")
+        race_times = pd.to_numeric(ordered_rows["_RaceHassoTimeMinutes"], errors="coerce").fillna(-1).to_numpy()
+        announcement_times = pd.to_numeric(
+            announcements_for_key[time_feature_col], errors="coerce"
+        ).fillna(-1).to_numpy()
+        insert_pos = np.searchsorted(announcement_times, race_times, side="right")
+        latest_idx = insert_pos - 1
+        valid_latest = latest_idx >= 0
+        if not valid_latest.any():
+            continue
+
+        row_index = ordered_rows.index.to_numpy()[valid_latest]
+        latest_positions = latest_idx[valid_latest]
+
+        for column in numeric_feature_cols:
+            values = pd.to_numeric(announcements_for_key[column], errors="coerce").fillna(0).to_numpy()
+            result.loc[row_index, column] = values[latest_positions]
+
+        for column in categorical_feature_cols:
+            values = (
+                announcements_for_key[column]
+                .astype("string")
+                .fillna("UNKNOWN")
+                .str.strip()
+                .replace("", "UNKNOWN")
+                .to_numpy(dtype=object)
+            )
+            result.loc[row_index, column] = values[latest_positions]
+
+    return result
 
 
 def _prepare_workout_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -438,9 +626,19 @@ def _merge_workout_features(
 def _add_external_features(
     frame: pd.DataFrame,
     wh_frame: pd.DataFrame,
+    we_frame: pd.DataFrame,
+    av_frame: pd.DataFrame,
+    jc_frame: pd.DataFrame,
+    tc_frame: pd.DataFrame,
+    cc_frame: pd.DataFrame,
     hc_frame: pd.DataFrame,
     wc_frame: pd.DataFrame,
     include_wh: bool,
+    include_we: bool,
+    include_av: bool,
+    include_jc: bool,
+    include_tc: bool,
+    include_cc: bool,
     include_hc: bool,
     include_wc: bool,
 ) -> pd.DataFrame:
@@ -454,21 +652,199 @@ def _add_external_features(
         else:
             wh_long = _reshape_wh_records(wh_frame)
             wh_long["Umaban"] = pd.to_numeric(wh_long["Umaban"], errors="coerce")
-            result = result.merge(
-                wh_long[RACE_KEY_COLS + ["Umaban", "HappyoTime", "WHBaTaijyu", "WHZogenFugo", "WHZogenSa", "WHAvailable"]],
-                on=RACE_KEY_COLS + ["Umaban"],
-                how="left",
+            wh_long["WHBaTaijyu"] = pd.to_numeric(wh_long["WHBaTaijyu"], errors="coerce")
+            wh_long["WHZogenSa"] = _signed_numeric(wh_long["WHZogenSa"], wh_long["WHZogenFugo"])
+            wh_long["WHHappyoTimeMinutes"] = wh_long["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            wh_long["WHAvailable"] = 1.0
+            wh_long["WHZogenSaAbs"] = wh_long["WHZogenSa"].abs()
+            wh_long["WHBaTaijyuDiffFromSE"] = np.nan
+            wh_long["WHZogenSaDiffFromSE"] = np.nan
+            wh_long = _prepare_announcement_frame(
+                wh_long,
+                RACE_KEY_COLS
+                + [
+                    "Umaban",
+                    "WHAvailable",
+                    "WHHappyoTimeMinutes",
+                    "WHBaTaijyu",
+                    "WHZogenSa",
+                    "WHZogenSaAbs",
+                    "WHBaTaijyuDiffFromSE",
+                    "WHZogenSaDiffFromSE",
+                ],
             )
-            result["WHBaTaijyu"] = pd.to_numeric(result["WHBaTaijyu"], errors="coerce")
-            result["WHZogenSa"] = _signed_numeric(result["WHZogenSa"], result["WHZogenFugo"])
-            result["WHHappyoTimeMinutes"] = result["HappyoTime"].apply(_parse_mdhm_to_minutes)
-            result["WHAvailable"] = pd.to_numeric(result["WHAvailable"], errors="coerce").fillna(0)
-            result["WHZogenSaAbs"] = result["WHZogenSa"].abs()
+            result = _merge_latest_announcement_features(
+                result,
+                wh_long,
+                RACE_KEY_COLS + ["Umaban"],
+                numeric_feature_cols=WH_FEATURE_COLS,
+                categorical_feature_cols=[],
+                time_feature_col="WHHappyoTimeMinutes",
+            )
             result["WHBaTaijyuDiffFromSE"] = result["WHBaTaijyu"] - pd.to_numeric(result["BaTaijyu"], errors="coerce")
             result["WHZogenSaDiffFromSE"] = result["WHZogenSa"] - pd.to_numeric(result["ZogenSa"], errors="coerce")
             for col in WH_FEATURE_COLS:
                 result[col] = pd.to_numeric(result[col], errors="coerce").fillna(0)
-            result = result.drop(columns=["HappyoTime", "WHZogenFugo"], errors="ignore")
+
+    if include_we:
+        if we_frame.empty:
+            for col in WE_FEATURE_COLS:
+                result[col] = 0 if col.startswith("WEChanged") or col.endswith("Minutes") or col == "WEAvailable" else "UNKNOWN"
+        else:
+            we_updates = _prepare_announcement_frame(we_frame, DAY_KEY_COLS + WE_CONTEXT_COLS)
+            we_updates["WEAvailable"] = 1.0
+            we_updates["WEHappyoTimeMinutes"] = we_updates["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            we_updates["WEHenkoID"] = we_updates.get("HenkoID", pd.Series(dtype="string"))
+            we_updates["WECurrentTenkoCD"] = we_updates.get("TenkoCD", pd.Series(dtype="string"))
+            we_updates["WECurrentSibaBabaCD"] = we_updates.get("SibaBabaCD", pd.Series(dtype="string"))
+            we_updates["WECurrentDirtBabaCD"] = we_updates.get("DirtBabaCD", pd.Series(dtype="string"))
+            we_updates["WEPreviousTenkoCD"] = we_updates.get("TenkoCDBefore", pd.Series(dtype="string"))
+            we_updates["WEPreviousSibaBabaCD"] = we_updates.get("SibaBabaCDBefore", pd.Series(dtype="string"))
+            we_updates["WEPreviousDirtBabaCD"] = we_updates.get("DirtBabaCDBefore", pd.Series(dtype="string"))
+            we_updates["WEChangedTenko"] = (
+                we_updates["WECurrentTenkoCD"].astype("string").str.strip()
+                != we_updates["WEPreviousTenkoCD"].astype("string").str.strip()
+            ).astype(float)
+            we_updates["WEChangedSibaBaba"] = (
+                we_updates["WECurrentSibaBabaCD"].astype("string").str.strip()
+                != we_updates["WEPreviousSibaBabaCD"].astype("string").str.strip()
+            ).astype(float)
+            we_updates["WEChangedDirtBaba"] = (
+                we_updates["WECurrentDirtBabaCD"].astype("string").str.strip()
+                != we_updates["WEPreviousDirtBabaCD"].astype("string").str.strip()
+            ).astype(float)
+            result = _merge_latest_announcement_features(
+                result,
+                we_updates,
+                DAY_KEY_COLS,
+                numeric_feature_cols=[
+                    "WEAvailable",
+                    "WEHappyoTimeMinutes",
+                    "WEChangedTenko",
+                    "WEChangedSibaBaba",
+                    "WEChangedDirtBaba",
+                ],
+                categorical_feature_cols=[
+                    "WEHenkoID",
+                    "WECurrentTenkoCD",
+                    "WECurrentSibaBabaCD",
+                    "WECurrentDirtBabaCD",
+                    "WEPreviousTenkoCD",
+                    "WEPreviousSibaBabaCD",
+                    "WEPreviousDirtBabaCD",
+                ],
+                time_feature_col="WEHappyoTimeMinutes",
+            )
+
+    if include_av:
+        if av_frame.empty:
+            result["AVAvailable"] = 0
+            result["AVHappyoTimeMinutes"] = 0
+            result["AVJiyuKubun"] = "UNKNOWN"
+        else:
+            av_updates = _prepare_announcement_frame(av_frame, RACE_KEY_COLS + AV_CONTEXT_COLS)
+            av_updates["Umaban"] = pd.to_numeric(av_updates["Umaban"], errors="coerce")
+            av_updates["AVAvailable"] = 1.0
+            av_updates["AVHappyoTimeMinutes"] = av_updates["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            av_updates["AVJiyuKubun"] = av_updates.get("JiyuKubun", pd.Series(dtype="string"))
+            result = _merge_latest_announcement_features(
+                result,
+                av_updates,
+                RACE_KEY_COLS + ["Umaban"],
+                numeric_feature_cols=["AVAvailable", "AVHappyoTimeMinutes"],
+                categorical_feature_cols=["AVJiyuKubun"],
+                time_feature_col="AVHappyoTimeMinutes",
+            )
+
+    if include_jc:
+        if jc_frame.empty:
+            for col in ["JCAvailable", "JCHappyoTimeMinutes", "JCAfterFutan", "JCBeforeFutan", "JCFutanDiff"]:
+                result[col] = 0
+            for col in ["JCAfterKisyuCode", "JCBeforeKisyuCode", "JCAfterMinaraiCD", "JCBeforeMinaraiCD"]:
+                result[col] = "UNKNOWN"
+        else:
+            jc_updates = _prepare_announcement_frame(jc_frame, RACE_KEY_COLS + JC_CONTEXT_COLS)
+            jc_updates["Umaban"] = pd.to_numeric(jc_updates["Umaban"], errors="coerce")
+            jc_updates["JCAvailable"] = 1.0
+            jc_updates["JCHappyoTimeMinutes"] = jc_updates["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            jc_updates["JCAfterFutan"] = pd.to_numeric(jc_updates["JCAfterFutan"], errors="coerce")
+            jc_updates["JCBeforeFutan"] = pd.to_numeric(jc_updates["JCBeforeFutan"], errors="coerce")
+            jc_updates["JCFutanDiff"] = jc_updates["JCAfterFutan"] - jc_updates["JCBeforeFutan"]
+            result = _merge_latest_announcement_features(
+                result,
+                jc_updates,
+                RACE_KEY_COLS + ["Umaban"],
+                numeric_feature_cols=[
+                    "JCAvailable",
+                    "JCHappyoTimeMinutes",
+                    "JCAfterFutan",
+                    "JCBeforeFutan",
+                    "JCFutanDiff",
+                ],
+                categorical_feature_cols=[
+                    "JCAfterKisyuCode",
+                    "JCBeforeKisyuCode",
+                    "JCAfterMinaraiCD",
+                    "JCBeforeMinaraiCD",
+                ],
+                time_feature_col="JCHappyoTimeMinutes",
+            )
+
+    if include_tc:
+        if tc_frame.empty:
+            for col in TC_FEATURE_COLS:
+                result[col] = 0
+        else:
+            tc_updates = _prepare_announcement_frame(tc_frame, RACE_KEY_COLS + TC_CONTEXT_COLS)
+            tc_updates["TCAvailable"] = 1.0
+            tc_updates["TCHappyoTimeMinutes"] = tc_updates["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            tc_updates["TCAfterHassoTimeMinutes"] = [
+                _parse_hhmm_pair_to_minutes(hour, minute)
+                for hour, minute in zip(tc_updates["TCAfterJi"], tc_updates["TCAfterFun"])
+            ]
+            tc_updates["TCBeforeHassoTimeMinutes"] = [
+                _parse_hhmm_pair_to_minutes(hour, minute)
+                for hour, minute in zip(tc_updates["TCBeforeJi"], tc_updates["TCBeforeFun"])
+            ]
+            tc_updates["TCHassoTimeDeltaMinutes"] = (
+                tc_updates["TCAfterHassoTimeMinutes"] - tc_updates["TCBeforeHassoTimeMinutes"]
+            )
+            result = _merge_latest_announcement_features(
+                result,
+                tc_updates,
+                RACE_KEY_COLS,
+                numeric_feature_cols=TC_FEATURE_COLS,
+                categorical_feature_cols=[],
+                time_feature_col="TCHappyoTimeMinutes",
+            )
+
+    if include_cc:
+        if cc_frame.empty:
+            for col in ["CCAvailable", "CCHappyoTimeMinutes", "CCAfterKyori", "CCBeforeKyori", "CCKyoriDiff"]:
+                result[col] = 0
+            for col in ["CCAfterTrackCD", "CCBeforeTrackCD", "CCJiyuCd"]:
+                result[col] = "UNKNOWN"
+        else:
+            cc_updates = _prepare_announcement_frame(cc_frame, RACE_KEY_COLS + CC_CONTEXT_COLS)
+            cc_updates["CCAvailable"] = 1.0
+            cc_updates["CCHappyoTimeMinutes"] = cc_updates["HappyoTime"].apply(_parse_mdhm_to_minutes)
+            cc_updates["CCAfterKyori"] = pd.to_numeric(cc_updates["CCAfterKyori"], errors="coerce")
+            cc_updates["CCBeforeKyori"] = pd.to_numeric(cc_updates["CCBeforeKyori"], errors="coerce")
+            cc_updates["CCKyoriDiff"] = cc_updates["CCAfterKyori"] - cc_updates["CCBeforeKyori"]
+            result = _merge_latest_announcement_features(
+                result,
+                cc_updates,
+                RACE_KEY_COLS,
+                numeric_feature_cols=[
+                    "CCAvailable",
+                    "CCHappyoTimeMinutes",
+                    "CCAfterKyori",
+                    "CCBeforeKyori",
+                    "CCKyoriDiff",
+                ],
+                categorical_feature_cols=["CCAfterTrackCD", "CCBeforeTrackCD", "CCJiyuCd"],
+                time_feature_col="CCHappyoTimeMinutes",
+            )
 
     if include_hc:
         hc_workouts = _prepare_workout_frame(hc_frame, HC_CONTEXT_COLS)
@@ -1100,12 +1476,27 @@ def _add_historical_features(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _feature_column_names(
     include_wh: bool = False,
+    include_we: bool = False,
+    include_av: bool = False,
+    include_jc: bool = False,
+    include_tc: bool = False,
+    include_cc: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
 ) -> list[str]:
     feature_cols = list(FEATURE_COLS)
     if include_wh:
         feature_cols.extend(WH_FEATURE_COLS)
+    if include_we:
+        feature_cols.extend(WE_FEATURE_COLS)
+    if include_av:
+        feature_cols.extend(AV_FEATURE_COLS)
+    if include_jc:
+        feature_cols.extend(JC_FEATURE_COLS)
+    if include_tc:
+        feature_cols.extend(TC_FEATURE_COLS)
+    if include_cc:
+        feature_cols.extend(CC_FEATURE_COLS)
     if include_hc:
         feature_cols.extend(HC_FEATURE_COLS)
     if include_wc:
@@ -1145,24 +1536,47 @@ def _load_raw_records(raw_path: Path) -> pd.DataFrame:
 def build_feature_frame(
     raw_dir=DEFAULT_RAW_DIR,
     include_wh: bool = False,
+    include_we: bool = False,
+    include_av: bool = False,
+    include_jc: bool = False,
+    include_tc: bool = False,
+    include_cc: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     raw_path = Path(raw_dir)
     full_df = _load_raw_records(raw_path)
-    feature_cols = _feature_column_names(include_wh, include_hc, include_wc)
+    feature_cols = _feature_column_names(
+        include_wh,
+        include_we,
+        include_av,
+        include_jc,
+        include_tc,
+        include_cc,
+        include_hc,
+        include_wc,
+    )
     if full_df.empty:
         return pd.DataFrame(), feature_cols
 
     df_ra = full_df[full_df["RecordSpec"] == "RA"].copy()
     df_se = full_df[full_df["RecordSpec"] == "SE"].copy()
     df_wh = full_df[full_df["RecordSpec"] == "WH"].copy()
+    df_we = full_df[full_df["RecordSpec"] == "WE"].copy()
+    df_av = full_df[full_df["RecordSpec"] == "AV"].copy()
+    df_jc = full_df[full_df["RecordSpec"] == "JC"].copy()
+    df_tc = full_df[full_df["RecordSpec"] == "TC"].copy()
+    df_cc = full_df[full_df["RecordSpec"] == "CC"].copy()
     df_hc = full_df[full_df["RecordSpec"] == "HC"].copy()
     df_wc = full_df[full_df["RecordSpec"] == "WC"].copy()
 
     print(f"RA records: {len(df_ra)}, SE records: {len(df_se)}")
-    if include_wh or include_hc or include_wc:
-        print(f"WH records: {len(df_wh)}, HC records: {len(df_hc)}, WC records: {len(df_wc)}")
+    if include_wh or include_we or include_av or include_jc or include_tc or include_cc or include_hc or include_wc:
+        print(
+            "Race-day records:"
+            f" WH={len(df_wh)} WE={len(df_we)} AV={len(df_av)} JC={len(df_jc)}"
+            f" TC={len(df_tc)} CC={len(df_cc)} HC={len(df_hc)} WC={len(df_wc)}"
+        )
 
     df_ra = df_ra[RACE_KEY_COLS + _available_cols(df_ra, RACE_CONTEXT_COLS)].copy()
     df_se = df_se[RACE_KEY_COLS + _available_cols(df_se, HORSE_CONTEXT_COLS)].copy()
@@ -1190,6 +1604,7 @@ def build_feature_frame(
         merged[col] = pd.to_numeric(merged[col], errors="coerce")
 
     merged["DistanceBucket"] = merged["Kyori"].apply(_bucket_distance)
+    merged["_RaceHassoTimeMinutes"] = merged["HassoTime"].apply(_parse_mdhm_to_minutes)
 
     if "ZogenFugo" in merged.columns and "ZogenSa" in merged.columns:
         merged.loc[merged["ZogenFugo"] == "-", "ZogenSa"] *= -1
@@ -1216,7 +1631,25 @@ def build_feature_frame(
     merged["_HistoryFinish"] = merged["KakuteiJyuni"].fillna(0)
     merged["_HistoryFinishPct"] = pd.to_numeric(merged["FinishPct"], errors="coerce").fillna(0)
 
-    merged = _add_external_features(merged, df_wh, df_hc, df_wc, include_wh, include_hc, include_wc)
+    merged = _add_external_features(
+        merged,
+        df_wh,
+        df_we,
+        df_av,
+        df_jc,
+        df_tc,
+        df_cc,
+        df_hc,
+        df_wc,
+        include_wh,
+        include_we,
+        include_av,
+        include_jc,
+        include_tc,
+        include_cc,
+        include_hc,
+        include_wc,
+    )
     merged = _add_historical_features(merged)
 
     keep_cols = OUTPUT_BASE_COLS + feature_cols
@@ -1232,6 +1665,11 @@ def make_dataset(
     output_dir=DEFAULT_OUTPUT_DIR,
     output_filename: str = "train_data.csv",
     include_wh: bool = False,
+    include_we: bool = False,
+    include_av: bool = False,
+    include_jc: bool = False,
+    include_tc: bool = False,
+    include_cc: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
 ):
@@ -1241,6 +1679,11 @@ def make_dataset(
     final_df, feature_cols = build_feature_frame(
         raw_dir=raw_dir,
         include_wh=include_wh,
+        include_we=include_we,
+        include_av=include_av,
+        include_jc=include_jc,
+        include_tc=include_tc,
+        include_cc=include_cc,
         include_hc=include_hc,
         include_wc=include_wc,
     )
@@ -1263,6 +1706,11 @@ def make_prediction_dataset(
     output_filename: str = "prediction_data.csv",
     prediction_date: str | None = None,
     include_wh: bool = False,
+    include_we: bool = False,
+    include_av: bool = False,
+    include_jc: bool = False,
+    include_tc: bool = False,
+    include_cc: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
 ):
@@ -1272,6 +1720,11 @@ def make_prediction_dataset(
     prediction_df, feature_cols = build_feature_frame(
         raw_dir=raw_dir,
         include_wh=include_wh,
+        include_we=include_we,
+        include_av=include_av,
+        include_jc=include_jc,
+        include_tc=include_tc,
+        include_cc=include_cc,
         include_hc=include_hc,
         include_wc=include_wc,
     )
@@ -1302,6 +1755,11 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for processed CSV output")
     parser.add_argument("--output-filename", default="train_data.csv", help="Output CSV filename")
     parser.add_argument("--include-wh", action="store_true", help="Include WH body-weight bulletin features")
+    parser.add_argument("--include-we", action="store_true", help="Include WE weather / track bulletin features")
+    parser.add_argument("--include-av", action="store_true", help="Include AV scratches / cancellation bulletin features")
+    parser.add_argument("--include-jc", action="store_true", help="Include JC jockey-change bulletin features")
+    parser.add_argument("--include-tc", action="store_true", help="Include TC post-time change bulletin features")
+    parser.add_argument("--include-cc", action="store_true", help="Include CC course-change bulletin features")
     parser.add_argument("--include-hc", action="store_true", help="Include HC hanro workout features")
     parser.add_argument("--include-wc", action="store_true", help="Include WC wood-chip workout features")
     args = parser.parse_args()
@@ -1311,6 +1769,11 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         output_filename=args.output_filename,
         include_wh=args.include_wh,
+        include_we=args.include_we,
+        include_av=args.include_av,
+        include_jc=args.include_jc,
+        include_tc=args.include_tc,
+        include_cc=args.include_cc,
         include_hc=args.include_hc,
         include_wc=args.include_wc,
     )

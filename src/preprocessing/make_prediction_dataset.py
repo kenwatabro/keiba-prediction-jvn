@@ -10,6 +10,11 @@ if __name__ == "__main__":
     parser.add_argument("--output-filename", default="prediction_data.csv", help="Output CSV filename")
     parser.add_argument("--prediction-date", default=None, help="Restrict output to a single race date (YYYY-MM-DD)")
     parser.add_argument("--include-wh", action="store_true", help="Include WH body-weight bulletin features")
+    parser.add_argument("--include-we", action="store_true", help="Include WE weather / track bulletin features")
+    parser.add_argument("--include-av", action="store_true", help="Include AV scratches / cancellation bulletin features")
+    parser.add_argument("--include-jc", action="store_true", help="Include JC jockey-change bulletin features")
+    parser.add_argument("--include-tc", action="store_true", help="Include TC post-time change bulletin features")
+    parser.add_argument("--include-cc", action="store_true", help="Include CC course-change bulletin features")
     parser.add_argument("--include-hc", action="store_true", help="Include HC hanro workout features")
     parser.add_argument("--include-wc", action="store_true", help="Include WC wood-chip workout features")
     args = parser.parse_args()
@@ -20,6 +25,11 @@ if __name__ == "__main__":
         output_filename=args.output_filename,
         prediction_date=args.prediction_date,
         include_wh=args.include_wh,
+        include_we=args.include_we,
+        include_av=args.include_av,
+        include_jc=args.include_jc,
+        include_tc=args.include_tc,
+        include_cc=args.include_cc,
         include_hc=args.include_hc,
         include_wc=args.include_wc,
     )

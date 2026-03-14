@@ -196,6 +196,172 @@ def build_wh_record(
     return bytes(buffer)
 
 
+def build_we_record(
+    year: str = "2024",
+    month_day: str = "0106",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    happyo_time: str = "01061420",
+    henko_id: str = "1",
+    tenko_cd: str = "1",
+    siba_baba_cd: str = "2",
+    dirt_baba_cd: str = "3",
+    tenko_cd_before: str = "4",
+    siba_baba_cd_before: str = "5",
+    dirt_baba_cd_before: str = "6",
+) -> bytes:
+    buffer = bytearray(b" " * 40)
+    write_field(buffer, 1, 2, "WE")
+    write_field(buffer, 4, 8, year + month_day)
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 8, happyo_time)
+    write_field(buffer, 34, 1, henko_id)
+    write_field(buffer, 35, 1, tenko_cd)
+    write_field(buffer, 36, 1, siba_baba_cd)
+    write_field(buffer, 37, 1, dirt_baba_cd)
+    write_field(buffer, 38, 1, tenko_cd_before)
+    write_field(buffer, 39, 1, siba_baba_cd_before)
+    write_field(buffer, 40, 1, dirt_baba_cd_before)
+    return bytes(buffer)
+
+
+def build_av_record(
+    year: str = "2024",
+    month_day: str = "0106",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "01061430",
+    umaban: str = "07",
+    bamei: str = "TEST HORSE",
+    jiyu_kubun: str = "001",
+) -> bytes:
+    buffer = bytearray(b" " * 76)
+    write_field(buffer, 1, 2, "AV")
+    write_field(buffer, 4, 8, year + month_day)
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, umaban)
+    write_field(buffer, 38, 36, bamei)
+    write_field(buffer, 74, 3, jiyu_kubun)
+    return bytes(buffer)
+
+
+def build_jc_record(
+    year: str = "2024",
+    month_day: str = "0106",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "01061440",
+    umaban: str = "07",
+    bamei: str = "TEST HORSE",
+    after_futan: str = "053",
+    after_kisyu_code: str = "54321",
+    after_kisyu_name: str = "NEW JOCKEY",
+    after_minarai_cd: str = "1",
+    before_futan: str = "055",
+    before_kisyu_code: str = "12345",
+    before_kisyu_name: str = "OLD JOCKEY",
+    before_minarai_cd: str = "0",
+) -> bytes:
+    buffer = bytearray(b" " * 159)
+    write_field(buffer, 1, 2, "JC")
+    write_field(buffer, 4, 8, year + month_day)
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, umaban)
+    write_field(buffer, 38, 36, bamei)
+    write_field(buffer, 74, 3, after_futan)
+    write_field(buffer, 77, 5, after_kisyu_code)
+    write_field(buffer, 82, 34, after_kisyu_name)
+    write_field(buffer, 116, 1, after_minarai_cd)
+    write_field(buffer, 117, 3, before_futan)
+    write_field(buffer, 120, 5, before_kisyu_code)
+    write_field(buffer, 125, 34, before_kisyu_name)
+    write_field(buffer, 159, 1, before_minarai_cd)
+    return bytes(buffer)
+
+
+def build_tc_record(
+    year: str = "2024",
+    month_day: str = "0106",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "01061450",
+    after_hour: str = "15",
+    after_minute: str = "10",
+    before_hour: str = "15",
+    before_minute: str = "30",
+) -> bytes:
+    buffer = bytearray(b" " * 43)
+    write_field(buffer, 1, 2, "TC")
+    write_field(buffer, 4, 8, year + month_day)
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, after_hour)
+    write_field(buffer, 38, 2, after_minute)
+    write_field(buffer, 40, 2, before_hour)
+    write_field(buffer, 42, 2, before_minute)
+    return bytes(buffer)
+
+
+def build_cc_record(
+    year: str = "2024",
+    month_day: str = "0106",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "01061500",
+    after_kyori: str = "1800",
+    after_track_cd: str = "22",
+    before_kyori: str = "1600",
+    before_track_cd: str = "11",
+    jiyu_cd: str = "2",
+) -> bytes:
+    buffer = bytearray(b" " * 48)
+    write_field(buffer, 1, 2, "CC")
+    write_field(buffer, 4, 8, year + month_day)
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 4, after_kyori)
+    write_field(buffer, 40, 2, after_track_cd)
+    write_field(buffer, 42, 4, before_kyori)
+    write_field(buffer, 46, 2, before_track_cd)
+    write_field(buffer, 48, 1, jiyu_cd)
+    return bytes(buffer)
+
+
 def build_hc_record(
     chokyo_date: str = "20240105",
     chokyo_time: str = "0650",
@@ -292,6 +458,11 @@ class JVParserTests(unittest.TestCase):
         )
         hc = parser.parse_line(build_hc_record())
         wc = parser.parse_line(build_wc_record())
+        we = parser.parse_line(build_we_record())
+        av = parser.parse_line(build_av_record())
+        jc = parser.parse_line(build_jc_record())
+        tc = parser.parse_line(build_tc_record())
+        cc = parser.parse_line(build_cc_record())
 
         self.assertEqual(ra["RecordSpec"], "RA")
         self.assertEqual(ra["YoubiCD"], "6")
@@ -344,6 +515,27 @@ class JVParserTests(unittest.TestCase):
         self.assertEqual(wc["BabaAround"], "2")
         self.assertEqual(wc["HaronTime5"], "653")
         self.assertEqual(wc["LapTime1"], "124")
+        self.assertEqual(we["RecordSpec"], "WE")
+        self.assertEqual(we["HappyoTime"], "01061420")
+        self.assertEqual(we["HenkoID"], "1")
+        self.assertEqual(we["TenkoCD"], "1")
+        self.assertEqual(we["TenkoCDBefore"], "4")
+        self.assertEqual(av["RecordSpec"], "AV")
+        self.assertEqual(av["Umaban"], "07")
+        self.assertEqual(av["JiyuKubun"], "001")
+        self.assertEqual(jc["RecordSpec"], "JC")
+        self.assertEqual(jc["JCAfterFutan"], "053")
+        self.assertEqual(jc["JCAfterKisyuCode"], "54321")
+        self.assertEqual(jc["JCBeforeKisyuCode"], "12345")
+        self.assertEqual(jc["JCBeforeMinaraiCD"], "0")
+        self.assertEqual(tc["RecordSpec"], "TC")
+        self.assertEqual(tc["TCAfterJi"], "15")
+        self.assertEqual(tc["TCAfterFun"], "10")
+        self.assertEqual(tc["TCBeforeFun"], "30")
+        self.assertEqual(cc["RecordSpec"], "CC")
+        self.assertEqual(cc["CCAfterKyori"], "1800")
+        self.assertEqual(cc["CCAfterTrackCD"], "22")
+        self.assertEqual(cc["CCJiyuCd"], "2")
 
 
 class MakeDatasetTests(unittest.TestCase):
@@ -438,7 +630,7 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(second_row["JockeyDistanceBucketStartsBefore"]), 1.0)
             self.assertEqual(float(second_row["TrainerDistanceBucketStartsBefore"]), 1.0)
 
-    def test_make_dataset_can_merge_wh_and_workout_features(self):
+    def test_make_dataset_can_merge_race_day_and_workout_features(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             raw_dir = temp_root / "raw"
@@ -466,6 +658,7 @@ class MakeDatasetTests(unittest.TestCase):
                         year="2024",
                         month_day="0106",
                         race_num="11",
+                        happyo_time="01061130",
                         horse_items=[
                             {
                                 "umaban": "07",
@@ -478,6 +671,12 @@ class MakeDatasetTests(unittest.TestCase):
                     )
                     + b"\n"
                 )
+                f.write(build_we_record(happyo_time="01061420", henko_id="1", tenko_cd="1", siba_baba_cd="2", dirt_baba_cd="3", tenko_cd_before="4", siba_baba_cd_before="5", dirt_baba_cd_before="6") + b"\n")
+                f.write(build_we_record(happyo_time="01061545", henko_id="2", tenko_cd="7", siba_baba_cd="8", dirt_baba_cd="9", tenko_cd_before="1", siba_baba_cd_before="2", dirt_baba_cd_before="3") + b"\n")
+                f.write(build_av_record(happyo_time="01061430", umaban="07", jiyu_kubun="001") + b"\n")
+                f.write(build_jc_record(happyo_time="01061440", umaban="07", after_futan="053", after_kisyu_code="54321", after_minarai_cd="1", before_futan="055", before_kisyu_code="12345", before_minarai_cd="0") + b"\n")
+                f.write(build_tc_record(happyo_time="01061450", after_hour="15", after_minute="10", before_hour="15", before_minute="30") + b"\n")
+                f.write(build_cc_record(happyo_time="01061500", after_kyori="1800", after_track_cd="22", before_kyori="1600", before_track_cd="11", jiyu_cd="2") + b"\n")
                 f.write(build_hc_record(chokyo_date="20240105", ketto_num="1234567890", haron_time4="524") + b"\n")
                 f.write(build_wc_record(chokyo_date="20240104", ketto_num="1234567890", haron_time5="653") + b"\n")
 
@@ -486,6 +685,11 @@ class MakeDatasetTests(unittest.TestCase):
                 output_dir=output_dir,
                 output_filename="train_data_raceday.csv",
                 include_wh=True,
+                include_we=True,
+                include_av=True,
+                include_jc=True,
+                include_tc=True,
+                include_cc=True,
                 include_hc=True,
                 include_wc=True,
             )
@@ -499,6 +703,35 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(row["WHZogenSaAbs"]), 4.0)
             self.assertEqual(float(row["WHBaTaijyuDiffFromSE"]), -2.0)
             self.assertEqual(float(row["WHZogenSaDiffFromSE"]), 1.0)
+            self.assertEqual(float(row["WEAvailable"]), 1.0)
+            self.assertEqual(float(row["WEHappyoTimeMinutes"]), 860.0)
+            self.assertEqual(str(row["WEHenkoID"]), "1")
+            self.assertEqual(str(row["WECurrentTenkoCD"]), "1")
+            self.assertEqual(str(row["WEPreviousTenkoCD"]), "4")
+            self.assertEqual(float(row["WEChangedTenko"]), 1.0)
+            self.assertEqual(float(row["AVAvailable"]), 1.0)
+            self.assertEqual(float(row["AVHappyoTimeMinutes"]), 870.0)
+            self.assertEqual(int(row["AVJiyuKubun"]), 1)
+            self.assertEqual(float(row["JCAvailable"]), 1.0)
+            self.assertEqual(float(row["JCHappyoTimeMinutes"]), 880.0)
+            self.assertEqual(float(row["JCAfterFutan"]), 53.0)
+            self.assertEqual(float(row["JCBeforeFutan"]), 55.0)
+            self.assertEqual(float(row["JCFutanDiff"]), -2.0)
+            self.assertEqual(str(row["JCAfterKisyuCode"]), "54321")
+            self.assertEqual(str(row["JCBeforeKisyuCode"]), "12345")
+            self.assertEqual(str(row["JCAfterMinaraiCD"]), "1")
+            self.assertEqual(float(row["TCAvailable"]), 1.0)
+            self.assertEqual(float(row["TCHappyoTimeMinutes"]), 890.0)
+            self.assertEqual(float(row["TCAfterHassoTimeMinutes"]), 910.0)
+            self.assertEqual(float(row["TCBeforeHassoTimeMinutes"]), 930.0)
+            self.assertEqual(float(row["TCHassoTimeDeltaMinutes"]), -20.0)
+            self.assertEqual(float(row["CCAvailable"]), 1.0)
+            self.assertEqual(float(row["CCHappyoTimeMinutes"]), 900.0)
+            self.assertEqual(float(row["CCAfterKyori"]), 1800.0)
+            self.assertEqual(float(row["CCBeforeKyori"]), 1600.0)
+            self.assertEqual(float(row["CCKyoriDiff"]), 200.0)
+            self.assertEqual(str(row["CCAfterTrackCD"]), "22")
+            self.assertEqual(str(row["CCJiyuCd"]), "2")
             self.assertEqual(float(row["HCHasRecent14d"]), 1.0)
             self.assertEqual(float(row["HCCount7d"]), 1.0)
             self.assertEqual(float(row["HCLastDaysAgo"]), 1.0)
@@ -911,12 +1144,22 @@ class MakeDatasetTests(unittest.TestCase):
                     )
                     + b"\n"
                 )
+                f.write(build_we_record(year="2024", month_day="0203", happyo_time="02031400", henko_id="1") + b"\n")
+                f.write(build_av_record(year="2024", month_day="0203", race_num="11", happyo_time="02031405", umaban="07", jiyu_kubun="002") + b"\n")
+                f.write(build_jc_record(year="2024", month_day="0203", race_num="11", happyo_time="02031410", umaban="07", after_kisyu_code="54321", before_kisyu_code="12345") + b"\n")
+                f.write(build_tc_record(year="2024", month_day="0203", race_num="11", happyo_time="02031415", after_hour="15", after_minute="20", before_hour="15", before_minute="30") + b"\n")
+                f.write(build_cc_record(year="2024", month_day="0203", race_num="11", happyo_time="02031420", after_kyori="1800", before_kyori="1600") + b"\n")
 
             make_prediction_dataset(
                 raw_dir=raw_dir,
                 output_dir=output_dir,
                 output_filename="prediction_data.csv",
                 prediction_date="2024-02-03",
+                include_we=True,
+                include_av=True,
+                include_jc=True,
+                include_tc=True,
+                include_cc=True,
             )
 
             prediction_data = pd.read_csv(output_dir / "prediction_data.csv")
@@ -927,6 +1170,11 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(prediction_data.loc[0, "HorseWinRateBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "JockeyStartsBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "TrainerStartsBefore"]), 1.0)
+            self.assertEqual(float(prediction_data.loc[0, "WEAvailable"]), 1.0)
+            self.assertEqual(int(prediction_data.loc[0, "AVJiyuKubun"]), 2)
+            self.assertEqual(str(prediction_data.loc[0, "JCAfterKisyuCode"]), "54321")
+            self.assertEqual(float(prediction_data.loc[0, "TCHassoTimeDeltaMinutes"]), -10.0)
+            self.assertEqual(float(prediction_data.loc[0, "CCKyoriDiff"]), 200.0)
 
 
 class FetchFilterTests(unittest.TestCase):
