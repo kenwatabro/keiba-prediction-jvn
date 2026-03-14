@@ -9,15 +9,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
 RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
-NON_ACCUMULATED_JVOPEN_SPECS = {"RACERCVN"}
+NON_ACCUMULATED_JVOPEN_SPECS = {"RCVN"}
 JVOPEN_SPEC_MAP = {
-    # These are record IDs inside the race-card dataspec, not standalone JVOpen dataspecs.
-    "WH": "RACERCVN",
-    "WE": "RACERCVN",
-    "AV": "RACERCVN",
-    "JC": "RACERCVN",
-    "TC": "RACERCVN",
-    "CC": "RACERCVN",
+    # These are record IDs inside the current-week race update dataspec, not standalone JVOpen dataspecs.
+    "WH": "RCVN",
+    "WE": "RCVN",
+    "AV": "RCVN",
+    "JC": "RCVN",
+    "TC": "RCVN",
+    "CC": "RCVN",
     # Workout record IDs are distributed through their workout dataspecs.
     "HC": "SLOP",
     "WC": "WOOD",
@@ -122,7 +122,7 @@ def explain_jvopen_error(code: int) -> str:
         return (
             "JVOpen failed with code -111. This usually means the dataspec or its parameters are invalid. "
             "Some record IDs such as WH/WE/AV/JC/TC/CC are not standalone JVOpen dataspecs and must be read "
-            "through the race-card dataspec (for example RACERCVN) and filtered locally."
+            "through the current-week race update dataspec (for example RCVN) and filtered locally."
         )
     if code == -112:
         return (
