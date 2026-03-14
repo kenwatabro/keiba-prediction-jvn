@@ -13,10 +13,12 @@ from trainer import (
     OBJECTIVE_CHOICES,
     build_feature_metadata_path,
     cast_categoricals,
+    filter_to_single_winner_races,
     filter_by_date_range,
     fit_booster,
     load_training_frame,
     select_feature_columns,
+    summarize_single_winner_filter,
     train_final_booster,
 )
 
@@ -605,9 +607,25 @@ def train_and_evaluate_target(
         drop_raw_ids=drop_raw_ids,
         exclude_prefixes=exclude_feature_prefixes,
     )
-    train_df = select_period(df, "train", train_start, train_end)
-    validation_df = select_period(df, "validation", validation_start, validation_end)
-    test_df = select_period(df, "test", test_start, test_end)
+    raw_train_df = select_period(df, "train", train_start, train_end)
+    raw_validation_df = select_period(df, "validation", validation_start, validation_end)
+    raw_test_df = select_period(df, "test", test_start, test_end)
+
+    single_winner_filter = {
+        "train": summarize_single_winner_filter(raw_train_df),
+        "validation": summarize_single_winner_filter(raw_validation_df),
+        "test": summarize_single_winner_filter(raw_test_df),
+    }
+    train_df = filter_to_single_winner_races(raw_train_df)
+    validation_df = filter_to_single_winner_races(raw_validation_df)
+    test_df = filter_to_single_winner_races(raw_test_df)
+
+    if train_df.empty:
+        raise ValueError("No train races remain after single-winner filtering.")
+    if validation_df.empty:
+        raise ValueError("No validation races remain after single-winner filtering.")
+    if test_df.empty:
+        raise ValueError("No test races remain after single-winner filtering.")
 
     if train_df["RaceDate"].max() >= validation_df["RaceDate"].min():
         raise ValueError("Validation period must start after the training period.")
@@ -683,6 +701,7 @@ def train_and_evaluate_target(
         "drop_raw_ids": drop_raw_ids,
         "model_path": str(final_model_path),
         "feature_count": len(feature_columns),
+        "single_winner_filter": single_winner_filter,
         "excluded_feature_prefixes": list(exclude_feature_prefixes or []),
         "evaluation_subset_any_positive_columns": list(eval_race_any_positive_columns or []),
         "train_rows": len(train_df),

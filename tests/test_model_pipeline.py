@@ -19,7 +19,14 @@ from temporal_evaluate import (  # noqa: E402
     summarize_race_pick_diagnostics,
     summarize_selective_policy,
 )
-from trainer import build_feature_metadata_path, filter_by_date_range, select_feature_columns, train_model  # noqa: E402
+from trainer import (  # noqa: E402
+    build_feature_metadata_path,
+    filter_by_date_range,
+    filter_to_single_winner_races,
+    select_feature_columns,
+    summarize_single_winner_filter,
+    train_model,
+)
 
 
 def build_training_dataframe() -> pd.DataFrame:
@@ -628,6 +635,29 @@ class ModelPipelineTests(unittest.TestCase):
 
         self.assertEqual(filtered["RaceKey"].tolist(), ["R1", "R1", "R3"])
         self.assertEqual(filtered["Umaban"].tolist(), [1, 2, 1])
+
+    def test_filter_to_single_winner_races_drops_no_winner_and_multi_winner_races(self):
+        frame = pd.DataFrame(
+            [
+                {"RaceKey": "R1", "Umaban": 1, "TargetWin": 1},
+                {"RaceKey": "R1", "Umaban": 2, "TargetWin": 0},
+                {"RaceKey": "R2", "Umaban": 1, "TargetWin": 0},
+                {"RaceKey": "R2", "Umaban": 2, "TargetWin": 0},
+                {"RaceKey": "R3", "Umaban": 1, "TargetWin": 1},
+                {"RaceKey": "R3", "Umaban": 2, "TargetWin": 1},
+            ]
+        )
+
+        summary = summarize_single_winner_filter(frame)
+        filtered = filter_to_single_winner_races(frame)
+
+        self.assertTrue(bool(summary["applied"]))
+        self.assertEqual(int(summary["total_races"]), 3)
+        self.assertEqual(int(summary["kept_races"]), 1)
+        self.assertEqual(int(summary["dropped_races_no_winner"]), 1)
+        self.assertEqual(int(summary["dropped_races_multi_winner"]), 1)
+        self.assertEqual(filtered["RaceKey"].tolist(), ["R1", "R1"])
+        self.assertEqual(filtered["Umaban"].tolist(), [1, 2])
 
     def test_select_feature_columns_can_exclude_prefixes(self):
         frame = pd.DataFrame(

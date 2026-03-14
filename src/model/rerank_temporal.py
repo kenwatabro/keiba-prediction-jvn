@@ -17,9 +17,11 @@ from trainer import (
     DEFAULT_DATA_PATH,
     build_feature_metadata_path,
     cast_categoricals,
+    filter_to_single_winner_races,
     fit_booster,
     load_training_frame,
     select_feature_columns,
+    summarize_single_winner_filter,
     train_final_booster,
 )
 
@@ -249,9 +251,19 @@ def main() -> None:
         raise FileNotFoundError(f"Training data not found: {data_path}")
 
     df = load_training_frame(data_path)
-    train_df = select_period(df, "train", args.train_start, args.train_end)
-    validation_df = select_period(df, "validation", args.validation_start, args.validation_end)
-    test_df = select_period(df, "test", args.test_start, args.test_end)
+    raw_train_df = select_period(df, "train", args.train_start, args.train_end)
+    raw_validation_df = select_period(df, "validation", args.validation_start, args.validation_end)
+    raw_test_df = select_period(df, "test", args.test_start, args.test_end)
+    single_winner_filter = {
+        "train": summarize_single_winner_filter(raw_train_df),
+        "validation": summarize_single_winner_filter(raw_validation_df),
+        "test": summarize_single_winner_filter(raw_test_df),
+    }
+    train_df = filter_to_single_winner_races(raw_train_df)
+    validation_df = filter_to_single_winner_races(raw_validation_df)
+    test_df = filter_to_single_winner_races(raw_test_df)
+    if train_df.empty or validation_df.empty or test_df.empty:
+        raise ValueError("No races remain after single-winner filtering.")
 
     stage1_feature_columns = select_feature_columns(df, "TargetWin", drop_raw_ids=args.drop_raw_ids)
     output_path = Path(args.output)
@@ -338,6 +350,7 @@ def main() -> None:
         "data_path": str(data_path),
         "top_k": args.top_k,
         "drop_raw_ids": args.drop_raw_ids,
+        "single_winner_filter": single_winner_filter,
         "stage1_feature_count": len(stage1_feature_columns),
         "stage2_feature_count": len(RERANK_FEATURE_COLS),
         "validation_candidate_coverage": summarize_candidate_coverage(contender_validation),

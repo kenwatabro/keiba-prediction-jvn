@@ -75,6 +75,62 @@ def load_training_frame(data_path: Path) -> pd.DataFrame:
     return df
 
 
+def summarize_single_winner_filter(
+    df: pd.DataFrame,
+    winner_col: str = "TargetWin",
+) -> dict[str, int | bool | str]:
+    summary: dict[str, int | bool | str] = {
+        "applied": False,
+        "winner_col": winner_col,
+        "total_rows": int(len(df)),
+        "kept_rows": int(len(df)),
+        "dropped_rows": 0,
+        "total_races": int(df["RaceKey"].nunique()) if "RaceKey" in df.columns else 0,
+        "kept_races": int(df["RaceKey"].nunique()) if "RaceKey" in df.columns else 0,
+        "dropped_races_no_winner": 0,
+        "dropped_races_multi_winner": 0,
+    }
+    if df.empty or "RaceKey" not in df.columns or winner_col not in df.columns:
+        return summary
+
+    winner_counts = (
+        pd.to_numeric(df[winner_col], errors="coerce")
+        .fillna(0)
+        .groupby(df["RaceKey"], sort=False)
+        .transform("sum")
+    )
+    race_winner_counts = winner_counts.groupby(df["RaceKey"], sort=False).first()
+    keep_mask = winner_counts.eq(1)
+    summary.update(
+        {
+            "applied": True,
+            "kept_rows": int(keep_mask.sum()),
+            "dropped_rows": int((~keep_mask).sum()),
+            "kept_races": int(race_winner_counts.eq(1).sum()),
+            "dropped_races_no_winner": int(race_winner_counts.eq(0).sum()),
+            "dropped_races_multi_winner": int(race_winner_counts.gt(1).sum()),
+        }
+    )
+    return summary
+
+
+def filter_to_single_winner_races(
+    df: pd.DataFrame,
+    winner_col: str = "TargetWin",
+) -> pd.DataFrame:
+    summary = summarize_single_winner_filter(df, winner_col=winner_col)
+    if not summary["applied"]:
+        return df.copy()
+
+    winner_counts = (
+        pd.to_numeric(df[winner_col], errors="coerce")
+        .fillna(0)
+        .groupby(df["RaceKey"], sort=False)
+        .transform("sum")
+    )
+    return df.loc[winner_counts.eq(1)].reset_index(drop=True)
+
+
 def select_feature_columns(
     df: pd.DataFrame,
     target_col: str,
@@ -256,6 +312,16 @@ def train_model(
             target_col = "Target"
         else:
             raise ValueError(f"Target column not found: {target_col}")
+
+    filter_summary = summarize_single_winner_filter(df)
+    if filter_summary["applied"]:
+        df = filter_to_single_winner_races(df)
+        if filter_summary["dropped_rows"]:
+            print(
+                "Filtered to single-winner races: "
+                f"kept {filter_summary['kept_races']}/{filter_summary['total_races']} races "
+                f"and {filter_summary['kept_rows']}/{filter_summary['total_rows']} rows."
+            )
 
     feature_columns = select_feature_columns(df, target_col, drop_raw_ids=drop_raw_ids)
     train_df, val_df = split_train_validation(df)
