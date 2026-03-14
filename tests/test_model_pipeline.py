@@ -15,6 +15,7 @@ from predictor import predict  # noqa: E402
 from temporal_evaluate import (  # noqa: E402
     filter_eval_races_by_any_positive_columns,
     select_period,
+    summarize_race_level_diagnostics,
     summarize_race_pick_diagnostics,
     summarize_selective_policy,
 )
@@ -413,6 +414,204 @@ class ModelPipelineTests(unittest.TestCase):
         self.assertEqual(int(summary["test_applied_policy"]["bet_count"]), 2)
         self.assertAlmostEqual(float(summary["test_applied_policy"]["metrics"]["win_return_rate"]), 200.0)
         self.assertAlmostEqual(float(summary["test_applied_policy"]["selection_rate"]), 2 / 3)
+
+    def test_summarize_race_level_diagnostics_reports_winner_rank_and_pairwise_accuracy(self):
+        eval_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 2,
+                    "Score": 0.90,
+                    "DistanceBucket": "MILE",
+                    "TrackCD": "11",
+                    "GradeCD": "A",
+                    "SyussoTosu": 8,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.60,
+                    "DistanceBucket": "MILE",
+                    "TrackCD": "11",
+                    "GradeCD": "A",
+                    "SyussoTosu": 8,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 3,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 8.0,
+                    "Ninki": 3,
+                    "Score": 0.20,
+                    "DistanceBucket": "MILE",
+                    "TrackCD": "11",
+                    "GradeCD": "A",
+                    "SyussoTosu": 8,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.5,
+                    "Ninki": 1,
+                    "Score": 0.80,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 6.0,
+                    "Ninki": 2,
+                    "Score": 0.70,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 3,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 7.5,
+                    "Ninki": 3,
+                    "Score": 0.60,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 4,
+                    "TargetWin": 0,
+                    "TargetTop3": 0,
+                    "OddsDecimal": 12.0,
+                    "Ninki": 4,
+                    "Score": 0.40,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+            ]
+        )
+
+        diagnostics = summarize_race_level_diagnostics(eval_df, "Score", "binary")
+        summary = diagnostics["summary"]
+
+        self.assertEqual(int(summary["races"]), 2)
+        self.assertEqual(int(summary["total_races"]), 2)
+        self.assertEqual(int(summary["races_skipped_no_winner"]), 0)
+        self.assertEqual(int(summary["races_with_multiple_winners"]), 0)
+        self.assertAlmostEqual(float(summary["winner_mean_rank"]), 1.5)
+        self.assertAlmostEqual(float(summary["winner_median_rank"]), 1.5)
+        self.assertAlmostEqual(float(summary["winner_mrr"]), 0.75)
+        self.assertAlmostEqual(float(summary["winner_top1_rate"]), 0.5)
+        self.assertAlmostEqual(float(summary["winner_top3_rate"]), 1.0)
+        self.assertAlmostEqual(float(summary["winner_vs_all_pairwise_accuracy"]), (1.0 + (2.0 / 3.0)) / 2.0)
+        self.assertAlmostEqual(float(summary["winner_vs_top4_pairwise_accuracy"]), (1.0 + (2.0 / 3.0)) / 2.0)
+        self.assertAlmostEqual(float(summary["top_pick_win_hit_rate"]), 0.5)
+
+    def test_summarize_race_level_diagnostics_builds_expected_slices(self):
+        eval_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 2,
+                    "Score": 0.90,
+                    "DistanceBucket": "MILE",
+                    "TrackCD": "11",
+                    "GradeCD": "A",
+                    "SyussoTosu": 8,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.60,
+                    "DistanceBucket": "MILE",
+                    "TrackCD": "11",
+                    "GradeCD": "A",
+                    "SyussoTosu": 8,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-02-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.5,
+                    "Ninki": 1,
+                    "Score": 0.80,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-02-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 6.0,
+                    "Ninki": 2,
+                    "Score": 0.70,
+                    "DistanceBucket": "LONG",
+                    "TrackCD": "21",
+                    "GradeCD": "B",
+                    "SyussoTosu": 14,
+                },
+            ]
+        )
+
+        diagnostics = summarize_race_level_diagnostics(eval_df, "Score", "binary")
+        slices = diagnostics["slices"]
+
+        favorite_agreement = {row["slice_value"]: row for row in slices["favorite_agreement"]}
+        self.assertEqual(set(favorite_agreement), {"agree", "disagree"})
+        self.assertAlmostEqual(float(favorite_agreement["disagree"]["top_pick_win_hit_rate"]), 1.0)
+        self.assertAlmostEqual(float(favorite_agreement["agree"]["top_pick_win_hit_rate"]), 0.0)
+
+        surface_group = {row["slice_value"]: row for row in slices["surface_group"]}
+        self.assertEqual(set(surface_group), {"DIRT", "TURF"})
+        self.assertEqual(int(surface_group["TURF"]["races"]), 1)
+        self.assertEqual(int(surface_group["DIRT"]["races"]), 1)
+
+        race_month = {row["slice_value"]: row for row in slices["race_month"]}
+        self.assertEqual(set(race_month), {"2024-01", "2024-02"})
 
     def test_filter_eval_races_by_any_positive_columns_keeps_full_races(self):
         frame = pd.DataFrame(
