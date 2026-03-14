@@ -15,6 +15,11 @@ class JVOpenResult:
 
 
 @dataclass
+class JVRTOpenResult:
+    return_code: int
+
+
+@dataclass
 class JVReadResult:
     return_code: int
     line: Optional[str] = None
@@ -82,6 +87,19 @@ class JVLinkClient:
             result.download_count,
             result.last_file_timestamp,
         )
+        return result
+
+    def open_realtime_dataspec(self, dataspec: str, key: str) -> JVRTOpenResult:
+        """Open a JV-Link realtime stream and normalize the COM return shape."""
+        self._ensure_initialized()
+
+        raw_result = self.jv_link.JVRTOpen(dataspec, key)
+        values = self._coerce_tuple(raw_result)
+        result = JVRTOpenResult(return_code=self._coerce_int(values[0]))
+        if result.return_code < 0:
+            raise RuntimeError(self._describe_jvrtopen_error(dataspec, result.return_code))
+
+        self.logger.info("JVRTOpen succeeded: dataspec=%s key=%s", dataspec, key)
         return result
 
     def wait_for_download(self, expected_download_count: Optional[int], poll_interval: float = 1.0) -> int:
@@ -195,4 +213,18 @@ class JVLinkClient:
                 "or complete online initial setup from JV-Link settings first."
             )
         return f"JVOpen failed for {dataspec} with code: {code}"
+
+    @staticmethod
+    def _describe_jvrtopen_error(dataspec: str, code: int) -> str:
+        if code == -1:
+            return (
+                f"JVRTOpen failed for {dataspec} with code -1. "
+                "The realtime dataspec/key combination may be invalid or unsupported by the installed JV-Link."
+            )
+        if code == -112:
+            return (
+                f"JVRTOpen failed for {dataspec} with code -112 (JVERR_CONNECT). "
+                "DataLab subscription/login/setup or session state may be invalid."
+            )
+        return f"JVRTOpen failed for {dataspec} with code: {code}"
 

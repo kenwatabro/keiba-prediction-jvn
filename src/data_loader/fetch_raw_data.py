@@ -9,15 +9,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
 RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
-NON_ACCUMULATED_JVOPEN_SPECS = {"RCVN"}
+REALTIME_DATA_SPEC_MAP = {
+    "WH": "0B14",
+    "WE": "0B14",
+    "AV": "0B14",
+    "JC": "0B14",
+    "TC": "0B14",
+    "CC": "0B14",
+}
+SINGLE_DATE_ONLY_OPEN_SPECS = {"0B14"}
 JVOPEN_SPEC_MAP = {
-    # These are record IDs inside the current-week race update dataspec, not standalone JVOpen dataspecs.
-    "WH": "RCVN",
-    "WE": "RCVN",
-    "AV": "RCVN",
-    "JC": "RCVN",
-    "TC": "RCVN",
-    "CC": "RCVN",
     # Workout record IDs are distributed through their workout dataspecs.
     "HC": "SLOP",
     "WC": "WOOD",
@@ -89,7 +90,7 @@ def build_jvopen_from_time(start_date: str, end_date: str, option: int) -> str:
 
 def resolve_dataspec(dataspec: str) -> tuple[str, str | None]:
     requested_spec = dataspec.upper()
-    jvopen_spec = JVOPEN_SPEC_MAP.get(requested_spec, requested_spec)
+    jvopen_spec = REALTIME_DATA_SPEC_MAP.get(requested_spec, JVOPEN_SPEC_MAP.get(requested_spec, requested_spec))
     record_spec_filter = requested_spec if requested_spec in RACE_DAY_RECORD_SPECS else None
     return jvopen_spec, record_spec_filter
 
@@ -101,18 +102,18 @@ def validate_dataspec_request(
     end_date: str,
     effective_option: int,
 ) -> None:
-    if jvopen_spec not in NON_ACCUMULATED_JVOPEN_SPECS:
+    if jvopen_spec not in SINGLE_DATE_ONLY_OPEN_SPECS:
         return
 
     if effective_option != 2:
         raise ValueError(
-            f"{requested_spec} is fetched through {jvopen_spec}, which is a non-accumulated race-day dataspec. "
+            f"{requested_spec} is fetched through {jvopen_spec}, which is a single-date realtime dataspec. "
             "Use --option 2 instead of setup-mode options."
         )
 
     if start_date != end_date:
         raise ValueError(
-            f"{requested_spec} is fetched through {jvopen_spec}, which is intended for race-day / current-distribution access. "
+            f"{requested_spec} is fetched through {jvopen_spec}, which is intended for race-day / realtime access. "
             "Historical date-range backfill is not supported by this fetch helper. Use a single target date with --option 2."
         )
 
@@ -122,7 +123,7 @@ def explain_jvopen_error(code: int) -> str:
         return (
             "JVOpen failed with code -111. This usually means the dataspec or its parameters are invalid. "
             "Some record IDs such as WH/WE/AV/JC/TC/CC are not standalone JVOpen dataspecs and must be read "
-            "through the current-week race update dataspec (for example RCVN) and filtered locally."
+            "through the realtime速報開催情報 dataspec (for example 0B14 via JVRTOpen) and filtered locally."
         )
     if code == -112:
         return (
@@ -158,6 +159,7 @@ def fetch_data(
     output_path.mkdir(parents=True, exist_ok=True)
     requested_spec = dataspec.upper()
     jvopen_spec, record_spec_filter = resolve_dataspec(requested_spec)
+    is_realtime_dataspec = jvopen_spec in SINGLE_DATE_ONLY_OPEN_SPECS
 
     filename = f"{requested_spec}_{start_date}_{end_date}.txt"
     filepath = output_path / filename
@@ -177,37 +179,48 @@ def fetch_data(
         if record_spec_filter is not None and option is None:
             effective_option = 2
         validate_dataspec_request(requested_spec, jvopen_spec, start_date, end_date, effective_option)
-        period_str = build_jvopen_from_time(start_date, end_date, effective_option)
-        logger.info(
-            "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",
-            jvopen_spec,
-            requested_spec,
-            period_str,
-            effective_option,
-        )
-        if start_date != end_date and effective_option in (3, 4):
+        if is_realtime_dataspec:
             logger.info(
-                "Using setup mode (option=%s) for historical fetch and filtering records locally to %s-%s.",
-                effective_option,
+                "Opening realtime dataspec=%s (requested=%s) with key=%s",
+                jvopen_spec,
+                requested_spec,
                 start_date,
-                end_date,
             )
-        elif effective_option == 1 and start_date != end_date:
+        else:
+            period_str = build_jvopen_from_time(start_date, end_date, effective_option)
             logger.info(
-                "Using normal mode (option=1) for a date range. This is mainly for troubleshooting; "
-                "historical backfill normally requires option 3 or 4."
+                "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",
+                jvopen_spec,
+                requested_spec,
+                period_str,
+                effective_option,
             )
+            if start_date != end_date and effective_option in (3, 4):
+                logger.info(
+                    "Using setup mode (option=%s) for historical fetch and filtering records locally to %s-%s.",
+                    effective_option,
+                    start_date,
+                    end_date,
+                )
+            elif effective_option == 1 and start_date != end_date:
+                logger.info(
+                    "Using normal mode (option=1) for a date range. This is mainly for troubleshooting; "
+                    "historical backfill normally requires option 3 or 4."
+                )
         if record_spec_filter is not None:
             logger.info("Filtering opened %s stream down to %s records.", jvopen_spec, record_spec_filter)
 
-        open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
+        if is_realtime_dataspec:
+            client.open_realtime_dataspec(jvopen_spec, start_date)
+        else:
+            open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
 
-        if open_result.download_count and open_result.download_count > 0:
-            logger.info(
-                "Waiting for JV-Link download completion: %s files",
-                open_result.download_count,
-            )
-            client.wait_for_download(open_result.download_count, poll_interval=poll_seconds)
+            if open_result.download_count and open_result.download_count > 0:
+                logger.info(
+                    "Waiting for JV-Link download completion: %s files",
+                    open_result.download_count,
+                )
+                client.wait_for_download(open_result.download_count, poll_interval=poll_seconds)
 
         logger.info("Writing data to %s with encoding cp932...", filepath)
 
