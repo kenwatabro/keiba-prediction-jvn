@@ -3,6 +3,7 @@ import sys
 from datetime import datetime
 import logging
 from pathlib import Path
+from collections import Counter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -213,6 +214,7 @@ def fetch_data(
         count = 0
         skipped_out_of_range = 0
         current_jv_file = None
+        observed_record_specs: Counter[str] = Counter()
         with filepath.open('w', encoding='cp932', errors='ignore', newline='\n') as f:
             while True:
                 read_result = client.read()
@@ -229,6 +231,7 @@ def fetch_data(
                 line = (read_result.line or "").rstrip("\r\n")
                 if not line:
                     continue
+                observed_record_specs[line[:2] or "??"] += 1
                 if start_date != end_date:
                     if not should_keep_line(line, start_date, end_date):
                         skipped_out_of_range += 1
@@ -246,6 +249,27 @@ def fetch_data(
         logger.info("Finished. Total kept records: %s", count)
         if skipped_out_of_range:
             logger.info("Skipped out-of-range records: %s", skipped_out_of_range)
+        if record_spec_filter is not None and count == 0:
+            if observed_record_specs:
+                observed_summary = ", ".join(
+                    f"{record_spec}:{record_count}"
+                    for record_spec, record_count in observed_record_specs.most_common(8)
+                )
+                logger.warning(
+                    "No %s records were kept from the opened %s stream. Observed record specs: %s. "
+                    "Try fetching %s directly without record filtering to inspect the raw stream.",
+                    record_spec_filter,
+                    jvopen_spec,
+                    observed_summary,
+                    jvopen_spec,
+                )
+            else:
+                logger.warning(
+                    "No records were read from the opened %s stream for requested spec %s. "
+                    "The target date may not be available through current-distribution access.",
+                    jvopen_spec,
+                    requested_spec,
+                )
         return filepath
     except Exception as e:
         logger.error("Fatal error: %s", e)

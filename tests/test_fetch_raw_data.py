@@ -113,6 +113,32 @@ class FetchRawDataTests(unittest.TestCase):
             lines = path.read_text(encoding="cp932").splitlines()
             self.assertEqual(lines, ["WH" + " " * 9 + "20240106" + "rest"])
 
+    def test_fetch_data_warns_when_filtered_race_day_stream_has_no_matching_records(self):
+        with TemporaryDirectory() as tmpdir:
+            client = FakeJVLinkClient(
+                open_result=FakeOpenResult(return_code=2, download_count=0),
+                read_results=[
+                    FakeReadResult(return_code=1, line="RA" + " " * 9 + "20240106" + "rest"),
+                    FakeReadResult(return_code=1, line="SE" + " " * 9 + "20240106" + "rest"),
+                    FakeReadResult(return_code=0),
+                ],
+            )
+            with patch.object(fetch_raw_data, "JVLinkClient", return_value=client):
+                with self.assertLogs(fetch_raw_data.__name__, level="WARNING") as captured_logs:
+                    path = fetch_raw_data.fetch_data(
+                        "20240106",
+                        "20240106",
+                        dataspec="WH",
+                        output_dir=tmpdir,
+                        overwrite=True,
+                    )
+
+            self.assertTrue(path.exists())
+            self.assertEqual(path.stat().st_size, 0)
+            self.assertTrue(
+                any("No WH records were kept" in line and "RA:1, SE:1" in line for line in captured_logs.output)
+            )
+
     def test_record_filter_reads_race_date_for_race_linked_records(self):
         self.assertEqual(extract_record_date("RA" + " " * 9 + "20240106" + "rest"), "20240106")
         self.assertTrue(should_keep_line("SE" + " " * 9 + "20240106" + "rest", "20240101", "20240131"))
