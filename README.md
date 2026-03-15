@@ -138,6 +138,14 @@ To run a market-aware benchmark on the same temporal split, add `--include-marke
 This is intended as a comparison benchmark, not the default market-free baseline.
 For the `TargetWin` market-aware run, the summary also includes `edge_diagnostics`, `edge_policy`, and `calibrated_edge_experiments`, which compare the model's predicted win probability against the race-normalized market implied probability and evaluate both thresholded and banded edge policies with optional `raw / platt / isotonic` calibration.
 
+To go one step further and learn when to bet, run the race-pick meta strategy experiment. It scores one candidate from the market-free model and one candidate from the market-aware model, learns an expected net return model on OOF training years, and then searches validation thresholds before applying the best rule to test:
+```bash
+./.venv/bin/python src/model/pick_strategy_temporal.py \
+  --drop-raw-ids \
+  --output data/processed/experiments/pick_strategy_temporal_summary.json
+```
+This is explicitly return-oriented and can choose sparse policies with far fewer bets than the all-races benchmark.
+
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
 ./.venv/bin/python src/model/temporal_evaluate.py \
