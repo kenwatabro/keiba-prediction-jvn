@@ -448,6 +448,26 @@ class ModelPipelineTests(unittest.TestCase):
 
         self.assertEqual(features, ["BaseFeature"])
 
+    def test_select_feature_columns_can_include_market_features(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": "2024-01-01",
+                    "BaseFeature": 1.0,
+                    "OddsDecimal": 3.2,
+                    "Ninki": 1,
+                    "TargetWin": 1,
+                }
+            ]
+        )
+
+        without_market = select_feature_columns(frame, "TargetWin")
+        with_market = select_feature_columns(frame, "TargetWin", include_market_features=True)
+
+        self.assertEqual(without_market, ["BaseFeature"])
+        self.assertEqual(with_market, ["BaseFeature", "OddsDecimal", "Ninki"])
+
 
 if __name__ == "__main__":
     unittest.main()
