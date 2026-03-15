@@ -128,6 +128,15 @@ To tune on `2024` and evaluate a final model trained on `2014-2024` against `202
 This writes `data/processed/temporal_evaluation_summary.json`. If the dataset does not cover those dates yet, the command exits with a coverage error and prints the available date range.
 The current recommended pure-performance setup is `binary + --drop-raw-ids`. For comparison runs, `--objective lambdarank` is also available, but it is not the default because current validation stability and AUC are weaker than the binary setup.
 
+To run a market-aware benchmark on the same temporal split, add `--include-market-features` so `OddsDecimal` and `Ninki` are available to the model:
+```bash
+./.venv/bin/python src/model/temporal_evaluate.py \
+  --drop-raw-ids \
+  --include-market-features \
+  --output data/processed/experiments/temporal_evaluation_market_aware.json
+```
+This is intended as a comparison benchmark, not the default market-free baseline.
+
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
 ./.venv/bin/python src/model/temporal_evaluate.py \

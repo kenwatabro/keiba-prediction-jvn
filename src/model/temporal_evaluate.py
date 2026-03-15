@@ -311,6 +311,7 @@ def train_and_evaluate_target(
     target_col: str,
     objective_name: str,
     drop_raw_ids: bool,
+    include_market_features: bool,
     train_start: str | None,
     train_end: str | None,
     validation_start: str | None,
@@ -325,6 +326,7 @@ def train_and_evaluate_target(
         target_col,
         drop_raw_ids=drop_raw_ids,
         exclude_prefixes=exclude_feature_prefixes,
+        include_market_features=include_market_features,
     )
     train_df = select_period(df, "train", train_start, train_end)
     validation_df = select_period(df, "validation", validation_start, validation_end)
@@ -336,10 +338,11 @@ def train_and_evaluate_target(
         raise ValueError("Test period must start after the validation period.")
 
     model_suffix = "" if objective_name == "binary" else f"_{objective_name}"
+    market_suffix = "_market" if include_market_features else ""
     raw_id_suffix = "_norawid" if drop_raw_ids else ""
-    tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}.txt"
+    tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}.txt"
     if raw_id_suffix:
-        tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{raw_id_suffix}.txt"
+        tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}{raw_id_suffix}.txt"
     tuning_booster = fit_booster(
         train_df,
         validation_df,
@@ -348,9 +351,9 @@ def train_and_evaluate_target(
         tuning_model_path,
         objective_name=objective_name,
     )
-    final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}.txt"
+    final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}.txt"
     if raw_id_suffix:
-        final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{raw_id_suffix}.txt"
+        final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}{raw_id_suffix}.txt"
     final_training_df = pd.concat([train_df, validation_df], ignore_index=True)
     final_booster = train_final_booster(
         final_training_df,
@@ -368,6 +371,7 @@ def train_and_evaluate_target(
                 "target_column": target_col,
                 "objective_name": objective_name,
                 "drop_raw_ids": drop_raw_ids,
+                "include_market_features": include_market_features,
             },
             ensure_ascii=True,
             indent=2,
@@ -402,6 +406,7 @@ def train_and_evaluate_target(
         "target": target_col,
         "objective_name": objective_name,
         "drop_raw_ids": drop_raw_ids,
+        "include_market_features": include_market_features,
         "model_path": str(final_model_path),
         "feature_count": len(feature_columns),
         "excluded_feature_prefixes": list(exclude_feature_prefixes or []),
@@ -451,6 +456,11 @@ def main() -> None:
         help="Exclude raw owner/jockey/trainer ID columns from the feature set.",
     )
     parser.add_argument(
+        "--include-market-features",
+        action="store_true",
+        help="Include market columns such as OddsDecimal and Ninki in training and evaluation.",
+    )
+    parser.add_argument(
         "--exclude-feature-prefix",
         action="append",
         default=[],
@@ -490,6 +500,7 @@ def main() -> None:
             "TargetTop3",
             args.objective,
             args.drop_raw_ids,
+            args.include_market_features,
             args.train_start,
             args.train_end,
             args.validation_start,
@@ -505,6 +516,7 @@ def main() -> None:
             "TargetWin",
             args.objective,
             args.drop_raw_ids,
+            args.include_market_features,
             args.train_start,
             args.train_end,
             args.validation_start,
