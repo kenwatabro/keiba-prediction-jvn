@@ -6,6 +6,8 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 from trainer import (
@@ -28,6 +30,8 @@ RACE_KEY_COLS = ["RaceKey"]
 SELECTIVE_MARGIN_THRESHOLDS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
 SELECTIVE_SCORE_THRESHOLDS = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
 SELECTIVE_EDGE_THRESHOLDS = [0.0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.10]
+EDGE_POLICY_BOUNDARIES = [-0.10, -0.05, -0.02, 0.0, 0.02, 0.05, 0.10]
+CALIBRATION_METHODS = ["raw", "platt", "isotonic"]
 SOFTMAX_PROB_EPSILON = 1e-15
 LOGIT_CLIP_EPSILON = 1e-6
 DEFAULT_CONTENDER_TOP_K = 4
@@ -102,6 +106,62 @@ def build_market_edge_pick_frame(eval_df: pd.DataFrame, score_col: str) -> pd.Da
     )
     picks["TopPickEdgePositive"] = picks["TopPickEdge"] > 0
     return picks
+
+
+def fit_probability_calibrator(
+    y_true: pd.Series,
+    scores: pd.Series,
+    method: str,
+):
+    if method == "raw":
+        return None
+
+    target = _coerce_numeric(y_true).astype(int)
+    probabilities = _coerce_numeric(scores).clip(lower=LOGIT_CLIP_EPSILON, upper=1.0 - LOGIT_CLIP_EPSILON)
+    if method == "platt":
+        logits = np.log(probabilities / (1.0 - probabilities)).to_numpy().reshape(-1, 1)
+        calibrator = LogisticRegression(max_iter=1000, solver="lbfgs")
+        calibrator.fit(logits, target.to_numpy())
+        return calibrator
+    if method == "isotonic":
+        calibrator = IsotonicRegression(out_of_bounds="clip")
+        calibrator.fit(probabilities.to_numpy(), target.to_numpy())
+        return calibrator
+    raise ValueError(f"Unsupported calibration method: {method}")
+
+
+def apply_probability_calibrator(
+    scores: pd.Series,
+    method: str,
+    calibrator,
+) -> pd.Series:
+    probabilities = _coerce_numeric(scores).clip(lower=LOGIT_CLIP_EPSILON, upper=1.0 - LOGIT_CLIP_EPSILON)
+    if method == "raw":
+        return probabilities
+    if method == "platt":
+        logits = np.log(probabilities / (1.0 - probabilities)).to_numpy().reshape(-1, 1)
+        calibrated = calibrator.predict_proba(logits)[:, 1]
+        return pd.Series(calibrated, index=scores.index, dtype="float64")
+    if method == "isotonic":
+        calibrated = calibrator.predict(probabilities.to_numpy())
+        return pd.Series(calibrated, index=scores.index, dtype="float64")
+    raise ValueError(f"Unsupported calibration method: {method}")
+
+
+def build_calibrated_eval_frame(
+    eval_df: pd.DataFrame,
+    source_score_col: str,
+    calibrated_score_col: str,
+    method: str,
+    calibrator,
+) -> pd.DataFrame:
+    calibrated_df = eval_df.copy()
+    calibrated_df[calibrated_score_col] = apply_probability_calibrator(
+        calibrated_df[source_score_col],
+        method,
+        calibrator,
+    )
+    return calibrated_df
 
 
 def _coerce_numeric(series: pd.Series, fill_value: float = 0.0) -> pd.Series:
@@ -313,6 +373,17 @@ def _summarize_pick_subset(picks: pd.DataFrame) -> dict[str, float]:
         "top3_hit_rate": float(picks["TargetTop3"].mean()) if bet_count else 0.0,
         "win_return_rate": (returned / stake * 100.0) if stake else 0.0,
     }
+
+
+def _edge_policy_complexity(policy: dict[str, object]) -> int:
+    complexity = 0
+    if policy.get("disagreement_only"):
+        complexity += 1
+    if policy.get("edge_threshold") is not None:
+        complexity += 1
+    if policy.get("edge_min") is not None or policy.get("edge_max") is not None:
+        complexity += 2
+    return complexity
 
 
 def _edge_bucket(value: object) -> str:
@@ -600,6 +671,12 @@ def summarize_selective_policy(
 
 
 def _edge_policy_name(policy: dict[str, object]) -> str:
+    if policy.get("disagreement_only") and (
+        policy.get("edge_min") is not None or policy.get("edge_max") is not None
+    ):
+        return "disagreement_edge_band"
+    if policy.get("edge_min") is not None or policy.get("edge_max") is not None:
+        return "edge_band"
     if policy.get("disagreement_only") and policy.get("edge_threshold") is not None:
         return "disagreement_edge"
     if policy.get("edge_threshold") is not None:
@@ -617,6 +694,19 @@ def _iter_edge_policies() -> list[dict[str, object]]:
         {"disagreement_only": True, "edge_threshold": threshold}
         for threshold in SELECTIVE_EDGE_THRESHOLDS
     )
+    boundaries = [-math.inf, *EDGE_POLICY_BOUNDARIES, math.inf]
+    for lower_index in range(len(boundaries) - 1):
+        for upper_index in range(lower_index + 1, len(boundaries)):
+            lower = boundaries[lower_index]
+            upper = boundaries[upper_index]
+            if math.isinf(lower) and math.isinf(upper):
+                continue
+            policy = {
+                "edge_min": None if math.isinf(lower) else float(lower),
+                "edge_max": None if math.isinf(upper) else float(upper),
+            }
+            policies.append(policy)
+            policies.append({**policy, "disagreement_only": True})
     return policies
 
 
@@ -627,6 +717,12 @@ def _apply_edge_policy(picks: pd.DataFrame, policy: dict[str, object]) -> pd.Dat
     edge_threshold = policy.get("edge_threshold")
     if edge_threshold is not None:
         selected = selected.loc[selected["TopPickEdge"] >= float(edge_threshold)]
+    edge_min = policy.get("edge_min")
+    if edge_min is not None:
+        selected = selected.loc[selected["TopPickEdge"] >= float(edge_min)]
+    edge_max = policy.get("edge_max")
+    if edge_max is not None:
+        selected = selected.loc[selected["TopPickEdge"] < float(edge_max)]
     return selected.copy()
 
 
@@ -649,6 +745,8 @@ def summarize_edge_policy(
                 "bet_count": len(selected),
                 "selection_rate": float(len(selected) / total_races) if total_races else 0.0,
                 "edge_threshold": policy.get("edge_threshold"),
+                "edge_min": policy.get("edge_min"),
+                "edge_max": policy.get("edge_max"),
                 "disagreement_only": bool(policy.get("disagreement_only", False)),
                 "metrics": _summarize_pick_subset(selected),
             }
@@ -668,6 +766,7 @@ def summarize_edge_policy(
             result["metrics"]["win_return_rate"],
             result["bet_count"],
             result["metrics"]["win_hit_rate"],
+            -_edge_policy_complexity(result),
         ),
     )
     selected_test = _apply_edge_policy(
@@ -675,6 +774,8 @@ def summarize_edge_policy(
         {
             "disagreement_only": best_validation["disagreement_only"],
             "edge_threshold": best_validation["edge_threshold"],
+            "edge_min": best_validation["edge_min"],
+            "edge_max": best_validation["edge_max"],
         },
     )
     return {
@@ -695,8 +796,86 @@ def summarize_edge_policy(
             "bet_count": len(selected_test),
             "selection_rate": float(len(selected_test) / len(test_picks)) if len(test_picks) else 0.0,
             "edge_threshold": best_validation["edge_threshold"],
+            "edge_min": best_validation["edge_min"],
+            "edge_max": best_validation["edge_max"],
             "disagreement_only": best_validation["disagreement_only"],
             "metrics": _summarize_pick_subset(selected_test),
+        },
+    }
+
+
+def summarize_calibrated_edge_experiments(
+    validation_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    score_col: str,
+    min_bets_ratio: float = 0.05,
+    min_bets_floor: int = 100,
+) -> dict[str, object]:
+    candidate_rows: list[dict[str, object]] = []
+    for method in CALIBRATION_METHODS:
+        calibrator = fit_probability_calibrator(validation_df["TargetWin"], validation_df[score_col], method)
+        calibrated_score_col = f"{score_col}_{method}"
+        calibrated_validation = build_calibrated_eval_frame(
+            validation_df,
+            score_col,
+            calibrated_score_col,
+            method,
+            calibrator,
+        )
+        calibrated_test = build_calibrated_eval_frame(
+            test_df,
+            score_col,
+            calibrated_score_col,
+            method,
+            calibrator,
+        )
+        edge_policy = summarize_edge_policy(
+            calibrated_validation,
+            calibrated_test,
+            calibrated_score_col,
+            min_bets_ratio=min_bets_ratio,
+            min_bets_floor=min_bets_floor,
+        )
+        candidate_rows.append(
+            {
+                "calibration_method": method,
+                "validation_race_pick_metrics": summarize_race_picks(calibrated_validation, calibrated_score_col),
+                "test_race_pick_metrics": summarize_race_picks(calibrated_test, calibrated_score_col),
+                "validation_edge_diagnostics": summarize_edge_diagnostics(calibrated_validation, calibrated_score_col),
+                "test_edge_diagnostics": summarize_edge_diagnostics(calibrated_test, calibrated_score_col),
+                "edge_policy": edge_policy,
+            }
+        )
+
+    best_validation = max(
+        candidate_rows,
+        key=lambda row: (
+            row["edge_policy"]["validation_best_policy"]["metrics"]["win_return_rate"],
+            row["edge_policy"]["validation_best_policy"]["bet_count"],
+            row["edge_policy"]["validation_best_policy"]["metrics"]["win_hit_rate"],
+            -CALIBRATION_METHODS.index(row["calibration_method"]),
+        ),
+    )
+    return {
+        "selection_metric": "win_return_rate",
+        "candidate_methods": candidate_rows,
+        "validation_top_methods": sorted(
+            candidate_rows,
+            key=lambda row: (
+                row["edge_policy"]["validation_best_policy"]["metrics"]["win_return_rate"],
+                row["edge_policy"]["validation_best_policy"]["bet_count"],
+                row["edge_policy"]["validation_best_policy"]["metrics"]["win_hit_rate"],
+                -CALIBRATION_METHODS.index(row["calibration_method"]),
+            ),
+            reverse=True,
+        )[:3],
+        "best_validation_method": {
+            "calibration_method": best_validation["calibration_method"],
+            "validation_best_policy": best_validation["edge_policy"]["validation_best_policy"],
+        },
+        "test_applied_best": {
+            "calibration_method": best_validation["calibration_method"],
+            **best_validation["edge_policy"]["test_applied_policy"],
         },
     }
 
@@ -903,6 +1082,11 @@ def train_and_evaluate_target(
             "test": summarize_edge_diagnostics(test_eval, score_col),
         }
         result["edge_policy"] = summarize_edge_policy(validation_eval, test_eval, score_col)
+        result["calibrated_edge_experiments"] = summarize_calibrated_edge_experiments(
+            validation_eval,
+            test_eval,
+            score_col,
+        )
     return result
 
 

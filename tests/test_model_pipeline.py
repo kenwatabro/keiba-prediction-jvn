@@ -16,6 +16,7 @@ from temporal_evaluate import (  # noqa: E402
     build_market_edge_pick_frame,
     filter_eval_races_by_any_positive_columns,
     select_period,
+    summarize_calibrated_edge_experiments,
     summarize_edge_diagnostics,
     summarize_edge_policy,
     summarize_race_level_diagnostics,
@@ -581,6 +582,213 @@ class ModelPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(float(summary["validation_best_policy"]["edge_threshold"]), 0.0)
         self.assertEqual(int(summary["test_applied_policy"]["bet_count"]), 2)
         self.assertAlmostEqual(float(summary["test_applied_policy"]["metrics"]["win_return_rate"]), 350.0)
+
+    def test_summarize_edge_policy_can_select_edge_band(self):
+        validation_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.51,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 2,
+                    "Score": 0.49,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 2,
+                    "Score": 0.49,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 1,
+                    "Score": 0.48,
+                },
+                {
+                    "RaceKey": "R3",
+                    "RaceDate": pd.Timestamp("2024-01-03"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.95,
+                },
+                {
+                    "RaceKey": "R3",
+                    "RaceDate": pd.Timestamp("2024-01-03"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 12.0,
+                    "Ninki": 2,
+                    "Score": 0.05,
+                },
+            ]
+        )
+        test_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 3.0,
+                    "Ninki": 1,
+                    "Score": 0.51,
+                },
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 3.0,
+                    "Ninki": 2,
+                    "Score": 0.49,
+                },
+                {
+                    "RaceKey": "T2",
+                    "RaceDate": pd.Timestamp("2025-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.95,
+                },
+                {
+                    "RaceKey": "T2",
+                    "RaceDate": pd.Timestamp("2025-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 10.0,
+                    "Ninki": 2,
+                    "Score": 0.05,
+                },
+            ]
+        )
+
+        summary = summarize_edge_policy(
+            validation_df,
+            test_df,
+            "Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=2,
+        )
+
+        self.assertEqual(summary["validation_best_policy"]["policy_name"], "edge_band")
+        self.assertIsNone(summary["validation_best_policy"]["edge_min"])
+        self.assertAlmostEqual(float(summary["validation_best_policy"]["edge_max"]), 0.02)
+        self.assertEqual(int(summary["test_applied_policy"]["bet_count"]), 1)
+        self.assertAlmostEqual(float(summary["test_applied_policy"]["metrics"]["win_return_rate"]), 300.0)
+
+    def test_probability_calibration_experiments_include_multiple_methods(self):
+        validation_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 4.0,
+                    "Ninki": 2,
+                    "Score": 0.55,
+                },
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": pd.Timestamp("2024-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.45,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 1,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.5,
+                    "Ninki": 1,
+                    "Score": 0.62,
+                },
+                {
+                    "RaceKey": "R2",
+                    "RaceDate": pd.Timestamp("2024-01-02"),
+                    "Umaban": 2,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 6.0,
+                    "Ninki": 2,
+                    "Score": 0.38,
+                },
+            ]
+        )
+        test_df = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 1,
+                    "TargetWin": 1,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 3.5,
+                    "Ninki": 2,
+                    "Score": 0.57,
+                },
+                {
+                    "RaceKey": "T1",
+                    "RaceDate": pd.Timestamp("2025-01-01"),
+                    "Umaban": 2,
+                    "TargetWin": 0,
+                    "TargetTop3": 1,
+                    "OddsDecimal": 2.0,
+                    "Ninki": 1,
+                    "Score": 0.43,
+                },
+            ]
+        )
+
+        experiments = summarize_calibrated_edge_experiments(
+            validation_df,
+            test_df,
+            "Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=1,
+        )
+
+        candidate_methods = {row["calibration_method"] for row in experiments["candidate_methods"]}
+        self.assertEqual(candidate_methods, {"raw", "platt", "isotonic"})
+        self.assertIn(experiments["best_validation_method"]["calibration_method"], candidate_methods)
+        self.assertIn(experiments["test_applied_best"]["calibration_method"], candidate_methods)
 
     def test_summarize_edge_diagnostics_reports_positive_edge_metrics(self):
         eval_df = pd.DataFrame(
