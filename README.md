@@ -136,6 +136,7 @@ To run a market-aware benchmark on the same temporal split, add `--include-marke
   --output data/processed/experiments/temporal_evaluation_market_aware.json
 ```
 This is intended as a comparison benchmark, not the default market-free baseline.
+For the `TargetWin` market-aware run, the summary also includes `edge_diagnostics` and `edge_policy`, which compare the model's predicted win probability against the race-normalized market implied probability and evaluate thresholded betting policies such as `disagreement_edge`.
 
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
