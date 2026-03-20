@@ -12,6 +12,7 @@ MODEL_DIR = PROJECT_ROOT / "src" / "model"
 sys.path.insert(0, str(MODEL_DIR))
 
 from predictor import predict  # noqa: E402
+from compare_market_benchmark import summarize_period_delta  # noqa: E402
 from temporal_evaluate import (  # noqa: E402
     filter_eval_races_by_any_positive_columns,
     select_period,
@@ -467,6 +468,27 @@ class ModelPipelineTests(unittest.TestCase):
 
         self.assertEqual(without_market, ["BaseFeature"])
         self.assertEqual(with_market, ["BaseFeature", "OddsDecimal", "Ninki"])
+
+    def test_summarize_period_delta_reports_metric_differences(self):
+        baseline = {
+            "binary_metrics": {"auc": 0.70, "accuracy": 0.60},
+            "race_pick_metrics": {"win_hit_rate": 0.20, "top3_hit_rate": 0.40, "win_return_rate": 80.0},
+            "favorite_baseline": {"win_return_rate": 75.0},
+        }
+        market = {
+            "binary_metrics": {"auc": 0.75, "accuracy": 0.62},
+            "race_pick_metrics": {"win_hit_rate": 0.24, "top3_hit_rate": 0.45, "win_return_rate": 85.0},
+            "favorite_baseline": {"win_return_rate": 75.0},
+        }
+
+        result = summarize_period_delta(baseline, market)
+
+        self.assertAlmostEqual(result["auc"]["delta"], 0.05)
+        self.assertAlmostEqual(result["accuracy"]["delta"], 0.02)
+        self.assertAlmostEqual(result["win_hit_rate"]["delta"], 0.04)
+        self.assertAlmostEqual(result["top3_hit_rate"]["delta"], 0.05)
+        self.assertAlmostEqual(result["win_return_rate"]["delta"], 5.0)
+        self.assertAlmostEqual(result["favorite_win_return_rate"]["delta"], 0.0)
 
 
 if __name__ == "__main__":

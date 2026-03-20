@@ -137,6 +137,14 @@ To run a market-aware benchmark on the same temporal split, add `--include-marke
 ```
 This is intended as a comparison benchmark, not the default market-free baseline.
 
+To compare the market-free and market-aware runs in one shot and save the deltas in a single JSON:
+
+```bash
+./.venv/bin/python src/model/compare_market_benchmark.py \
+  --drop-raw-ids \
+  --output data/processed/experiments/market_benchmark_comparison.json
+```
+
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
 ./.venv/bin/python src/model/temporal_evaluate.py \
