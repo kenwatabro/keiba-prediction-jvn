@@ -74,6 +74,7 @@ Confirmed expanded fetch patterns:
 
 - historical race/result backfill: `--spec RACE --option 3`
 - race-day body-weight bulletin: `--spec WH --option 2` on a single target date
+- race-day single-win odds snapshot: `--spec O1 --rt-key <RaceKey>` via realtime `JVRTOpen`
 - hanro workout history: `--spec SLOP --option 3`
 - wood-chip workout history: `--spec WOOD --option 3`
 
@@ -81,9 +82,36 @@ Examples:
 
 ```powershell
 python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20260314 --end 20260314 --spec O1 --rt-key 2026031406010111 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 ```
+
+Suggested semi-automatic operation:
+
+- `RACE`, `SLOP`, `WOOD` are the daily historical bundle.
+- `WH` is race-day only and should be fetched on the same day, not backfilled later.
+- Use the Windows wrapper scripts under `scripts/windows/` with Task Scheduler.
+
+Examples:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_daily_bundle.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_wh.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1.ps1 -RaceKey 2026031406010111 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+```
+
+Recommended schedule:
+
+- once every evening after racing: `fetch_daily_bundle.ps1`
+- on race days only, several times during the day: `fetch_raceday_wh.ps1`
+
+The practical architecture is:
+
+- Windows machine: fetch with `JV-Link`
+- Ubuntu/WSL machine: sync exported `.txt` files, build datasets, train/evaluate models
+
+`JV-Link` fetch itself must run on Windows directly. A Linux or Ubuntu machine can still be useful as the downstream training/evaluation box, but it cannot call `JV-Link` natively.
 
 ```bash
 ./scripts/sync_raw_from_windows.sh /mnt/c/path/to/jra-van-data/raw data/raw
@@ -99,6 +127,7 @@ The dataset builder now removes exact duplicate raw rows, deduplicates duplicate
 If `WH` body-weight bulletin data or `HC` / `WC` workout data has also been fetched into `data/raw/`, an alternate race-day dataset can be built explicitly:
 ```bash
 ./.venv/bin/python src/preprocessing/make_dataset.py \
+  --include-o1 \
   --include-wh \
   --include-hc \
   --include-wc \
@@ -162,6 +191,15 @@ To compare an optional race-day feature family on the exact same dataset and the
   --output data/processed/experiments/wh_subset_variant_eval.json
 ```
 The first command trains a baseline on the same dataset while removing `WH*` columns. The second keeps the `WH*` columns. Both summaries are evaluated only on races where `WHAvailable > 0` for at least one runner.
+
+For live market-aware prediction, fetch `O1` for the target race and build a pending-race dataset with:
+```bash
+./.venv/bin/python src/preprocessing/make_prediction_dataset.py \
+  --include-o1 \
+  --prediction-date 2026-03-14 \
+  --output-filename prediction_data_market.csv
+```
+When an `O1_*.txt` snapshot is present, pending rows with missing market columns are filled from the latest `O1` snapshot for each `RaceKey + Umaban`. That makes the resulting CSV compatible with a model trained using `--include-market-features`.
 
 ### 3c. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:

@@ -272,6 +272,10 @@ OUTPUT_BASE_COLS = [
     "TargetWin",
     "HasResult",
 ]
+O1_BASE_COLS = [
+    "MakeDate",
+    "HappyoTime",
+]
 SMOOTHING_PRIOR_WEIGHT = 20.0
 
 
@@ -341,6 +345,66 @@ def _reshape_wh_records(frame: pd.DataFrame) -> pd.DataFrame:
 
     reshaped = pd.concat(horse_rows, ignore_index=True, sort=False)
     return _deduplicate_by_key(reshaped, RACE_KEY_COLS + ["Umaban"], "WH")
+
+
+def _reshape_o1_records(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=RACE_KEY_COLS + ["Umaban", "MakeDate", "HappyoTime", "O1Odds", "O1Ninki"])
+
+    horse_rows = []
+    base_cols = RACE_KEY_COLS + _available_cols(frame, O1_BASE_COLS)
+    for index in range(28):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["Umaban"] = frame.get(f"Umaban{item_no}")
+        part["O1Odds"] = frame.get(f"Odds{item_no}")
+        part["O1Ninki"] = frame.get(f"Ninki{item_no}")
+        part = part.loc[part["Umaban"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["Umaban"].astype("string").str.strip().ne("00")]
+        horse_rows.append(part)
+
+    if not horse_rows:
+        return pd.DataFrame(columns=RACE_KEY_COLS + ["Umaban", "MakeDate", "HappyoTime", "O1Odds", "O1Ninki"])
+
+    reshaped = pd.concat(horse_rows, ignore_index=True, sort=False)
+    reshaped["MakeDate"] = reshaped["MakeDate"].astype("string").fillna("").str.strip()
+    reshaped["HappyoTime"] = reshaped["HappyoTime"].astype("string").fillna("").str.strip()
+    reshaped["_SnapshotOrder"] = (
+        reshaped["MakeDate"].str.pad(8, side="left", fillchar="0")
+        + reshaped["HappyoTime"].str.pad(8, side="left", fillchar="0")
+    )
+    reshaped = reshaped.sort_values(RACE_KEY_COLS + ["Umaban", "_SnapshotOrder"], kind="stable")
+    reshaped = reshaped.drop_duplicates(RACE_KEY_COLS + ["Umaban"], keep="last").reset_index(drop=True)
+    return reshaped.drop(columns=["_SnapshotOrder"], errors="ignore")
+
+
+def _apply_o1_market_snapshot(frame: pd.DataFrame, o1_frame: pd.DataFrame, include_o1: bool) -> pd.DataFrame:
+    result = frame.copy()
+    if not include_o1 or o1_frame.empty:
+        return result
+
+    o1_long = _reshape_o1_records(o1_frame)
+    if o1_long.empty:
+        return result
+
+    o1_long["Umaban"] = pd.to_numeric(o1_long["Umaban"], errors="coerce")
+    o1_long["O1OddsDecimal"] = pd.to_numeric(o1_long["O1Odds"], errors="coerce") / 10.0
+    o1_long["O1Ninki"] = pd.to_numeric(o1_long["O1Ninki"], errors="coerce")
+    result = result.merge(
+        o1_long[RACE_KEY_COLS + ["Umaban", "O1OddsDecimal", "O1Ninki"]],
+        on=RACE_KEY_COLS + ["Umaban"],
+        how="left",
+    )
+    pending_mask = ~result["HasResult"]
+    result.loc[pending_mask & result["OddsDecimal"].isna(), "OddsDecimal"] = result.loc[
+        pending_mask & result["OddsDecimal"].isna(),
+        "O1OddsDecimal",
+    ]
+    result.loc[pending_mask & result["Ninki"].isna(), "Ninki"] = result.loc[
+        pending_mask & result["Ninki"].isna(),
+        "O1Ninki",
+    ]
+    return result.drop(columns=["O1OddsDecimal", "O1Ninki"], errors="ignore")
 
 
 def _prepare_workout_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -1144,6 +1208,7 @@ def _load_raw_records(raw_path: Path) -> pd.DataFrame:
 
 def build_feature_frame(
     raw_dir=DEFAULT_RAW_DIR,
+    include_o1: bool = False,
     include_wh: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
@@ -1156,13 +1221,14 @@ def build_feature_frame(
 
     df_ra = full_df[full_df["RecordSpec"] == "RA"].copy()
     df_se = full_df[full_df["RecordSpec"] == "SE"].copy()
+    df_o1 = full_df[full_df["RecordSpec"] == "O1"].copy()
     df_wh = full_df[full_df["RecordSpec"] == "WH"].copy()
     df_hc = full_df[full_df["RecordSpec"] == "HC"].copy()
     df_wc = full_df[full_df["RecordSpec"] == "WC"].copy()
 
     print(f"RA records: {len(df_ra)}, SE records: {len(df_se)}")
-    if include_wh or include_hc or include_wc:
-        print(f"WH records: {len(df_wh)}, HC records: {len(df_hc)}, WC records: {len(df_wc)}")
+    if include_o1 or include_wh or include_hc or include_wc:
+        print(f"O1 records: {len(df_o1)}, WH records: {len(df_wh)}, HC records: {len(df_hc)}, WC records: {len(df_wc)}")
 
     df_ra = df_ra[RACE_KEY_COLS + _available_cols(df_ra, RACE_CONTEXT_COLS)].copy()
     df_se = df_se[RACE_KEY_COLS + _available_cols(df_se, HORSE_CONTEXT_COLS)].copy()
@@ -1216,6 +1282,7 @@ def build_feature_frame(
     merged["_HistoryFinish"] = merged["KakuteiJyuni"].fillna(0)
     merged["_HistoryFinishPct"] = pd.to_numeric(merged["FinishPct"], errors="coerce").fillna(0)
 
+    merged = _apply_o1_market_snapshot(merged, df_o1, include_o1)
     merged = _add_external_features(merged, df_wh, df_hc, df_wc, include_wh, include_hc, include_wc)
     merged = _add_historical_features(merged)
 
@@ -1231,6 +1298,7 @@ def make_dataset(
     raw_dir=DEFAULT_RAW_DIR,
     output_dir=DEFAULT_OUTPUT_DIR,
     output_filename: str = "train_data.csv",
+    include_o1: bool = False,
     include_wh: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
@@ -1240,6 +1308,7 @@ def make_dataset(
 
     final_df, feature_cols = build_feature_frame(
         raw_dir=raw_dir,
+        include_o1=include_o1,
         include_wh=include_wh,
         include_hc=include_hc,
         include_wc=include_wc,
@@ -1262,6 +1331,7 @@ def make_prediction_dataset(
     output_dir=DEFAULT_OUTPUT_DIR,
     output_filename: str = "prediction_data.csv",
     prediction_date: str | None = None,
+    include_o1: bool = False,
     include_wh: bool = False,
     include_hc: bool = False,
     include_wc: bool = False,
@@ -1271,6 +1341,7 @@ def make_prediction_dataset(
 
     prediction_df, feature_cols = build_feature_frame(
         raw_dir=raw_dir,
+        include_o1=include_o1,
         include_wh=include_wh,
         include_hc=include_hc,
         include_wc=include_wc,
@@ -1301,6 +1372,7 @@ if __name__ == "__main__":
     parser.add_argument("--raw-dir", default=str(DEFAULT_RAW_DIR), help="Directory containing raw text files")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for processed CSV output")
     parser.add_argument("--output-filename", default="train_data.csv", help="Output CSV filename")
+    parser.add_argument("--include-o1", action="store_true", help="Use realtime O1 odds to fill pending-race market columns")
     parser.add_argument("--include-wh", action="store_true", help="Include WH body-weight bulletin features")
     parser.add_argument("--include-hc", action="store_true", help="Include HC hanro workout features")
     parser.add_argument("--include-wc", action="store_true", help="Include WC wood-chip workout features")
@@ -1310,6 +1382,7 @@ if __name__ == "__main__":
         raw_dir=args.raw_dir,
         output_dir=args.output_dir,
         output_filename=args.output_filename,
+        include_o1=args.include_o1,
         include_wh=args.include_wh,
         include_hc=args.include_hc,
         include_wc=args.include_wc,

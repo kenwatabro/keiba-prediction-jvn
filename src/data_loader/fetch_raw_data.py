@@ -9,6 +9,10 @@ SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
 RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
 NON_ACCUMULATED_JVOPEN_SPECS = {"RACERCVN"}
+REALTIME_JVRT_SPEC_MAP = {
+    # Realtime single-win odds / popularity snapshot keyed by RaceKey.
+    "O1": "0B31",
+}
 JVOPEN_SPEC_MAP = {
     # These are record IDs inside the race-card dataspec, not standalone JVOpen dataspecs.
     "WH": "RACERCVN",
@@ -93,6 +97,38 @@ def resolve_dataspec(dataspec: str) -> tuple[str, str | None]:
     return jvopen_spec, record_spec_filter
 
 
+def resolve_realtime_dataspec(dataspec: str) -> str | None:
+    return REALTIME_JVRT_SPEC_MAP.get(dataspec.upper())
+
+
+def validate_realtime_request(
+    requested_spec: str,
+    rt_spec: str,
+    start_date: str,
+    end_date: str,
+    rt_key: str | None,
+) -> str:
+    if not rt_key:
+        raise ValueError(
+            f"{requested_spec} is fetched through realtime dataspec {rt_spec}. "
+            "Provide a full 16-digit RaceKey with --rt-key."
+        )
+
+    normalized_key = rt_key.strip()
+    if len(normalized_key) != 16 or not normalized_key.isdigit():
+        raise ValueError(f"Invalid --rt-key '{rt_key}'. Expected a 16-digit RaceKey.")
+    if start_date != end_date:
+        raise ValueError(
+            f"{requested_spec} realtime fetch only supports a single race date. "
+            "Use the same start/end date as the RaceKey date."
+        )
+    if normalized_key[:8] != start_date:
+        raise ValueError(
+            f"{requested_spec} --rt-key date {normalized_key[:8]} does not match --start/--end {start_date}."
+        )
+    return normalized_key
+
+
 def validate_dataspec_request(
     requested_spec: str,
     jvopen_spec: str,
@@ -148,6 +184,7 @@ def fetch_data(
     poll_seconds=1.0,
     overwrite=False,
     save_path=None,
+    rt_key=None,
 ):
     logger = logging.getLogger(__name__)
     if JVLinkClient is None:
@@ -156,9 +193,14 @@ def fetch_data(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     requested_spec = dataspec.upper()
+    realtime_spec = resolve_realtime_dataspec(requested_spec)
     jvopen_spec, record_spec_filter = resolve_dataspec(requested_spec)
-
-    filename = f"{requested_spec}_{start_date}_{end_date}.txt"
+    if realtime_spec is not None:
+        realtime_key = validate_realtime_request(requested_spec, realtime_spec, start_date, end_date, rt_key)
+        filename = f"{requested_spec}_{realtime_key}.txt"
+    else:
+        realtime_key = None
+        filename = f"{requested_spec}_{start_date}_{end_date}.txt"
     filepath = output_path / filename
 
     if filepath.exists() and filepath.stat().st_size > 0 and not overwrite:
@@ -172,41 +214,50 @@ def fetch_data(
         if save_path:
             client.set_save_path(str(save_path))
 
-        effective_option = normalize_option(start_date, end_date, option)
-        if record_spec_filter is not None and option is None:
-            effective_option = 2
-        validate_dataspec_request(requested_spec, jvopen_spec, start_date, end_date, effective_option)
-        period_str = build_jvopen_from_time(start_date, end_date, effective_option)
-        logger.info(
-            "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",
-            jvopen_spec,
-            requested_spec,
-            period_str,
-            effective_option,
-        )
-        if start_date != end_date and effective_option in (3, 4):
+        if realtime_spec is not None:
             logger.info(
-                "Using setup mode (option=%s) for historical fetch and filtering records locally to %s-%s.",
+                "Opening realtime dataspec=%s (requested=%s) with key=%s",
+                realtime_spec,
+                requested_spec,
+                realtime_key,
+            )
+            client.open_realtime_dataspec(realtime_spec, realtime_key)
+        else:
+            effective_option = normalize_option(start_date, end_date, option)
+            if record_spec_filter is not None and option is None:
+                effective_option = 2
+            validate_dataspec_request(requested_spec, jvopen_spec, start_date, end_date, effective_option)
+            period_str = build_jvopen_from_time(start_date, end_date, effective_option)
+            logger.info(
+                "Opening dataspec=%s (requested=%s) with from_time=%s option=%s",
+                jvopen_spec,
+                requested_spec,
+                period_str,
                 effective_option,
-                start_date,
-                end_date,
             )
-        elif effective_option == 1 and start_date != end_date:
-            logger.info(
-                "Using normal mode (option=1) for a date range. This is mainly for troubleshooting; "
-                "historical backfill normally requires option 3 or 4."
-            )
-        if record_spec_filter is not None:
-            logger.info("Filtering opened %s stream down to %s records.", jvopen_spec, record_spec_filter)
+            if start_date != end_date and effective_option in (3, 4):
+                logger.info(
+                    "Using setup mode (option=%s) for historical fetch and filtering records locally to %s-%s.",
+                    effective_option,
+                    start_date,
+                    end_date,
+                )
+            elif effective_option == 1 and start_date != end_date:
+                logger.info(
+                    "Using normal mode (option=1) for a date range. This is mainly for troubleshooting; "
+                    "historical backfill normally requires option 3 or 4."
+                )
+            if record_spec_filter is not None:
+                logger.info("Filtering opened %s stream down to %s records.", jvopen_spec, record_spec_filter)
 
-        open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
+            open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
 
-        if open_result.download_count and open_result.download_count > 0:
-            logger.info(
-                "Waiting for JV-Link download completion: %s files",
-                open_result.download_count,
-            )
-            client.wait_for_download(open_result.download_count, poll_interval=poll_seconds)
+            if open_result.download_count and open_result.download_count > 0:
+                logger.info(
+                    "Waiting for JV-Link download completion: %s files",
+                    open_result.download_count,
+                )
+                client.wait_for_download(open_result.download_count, poll_interval=poll_seconds)
 
         logger.info("Writing data to %s with encoding cp932...", filepath)
 
@@ -229,11 +280,13 @@ def fetch_data(
                 line = (read_result.line or "").rstrip("\r\n")
                 if not line:
                     continue
-                if start_date != end_date:
+                if realtime_spec is None and start_date != end_date:
                     if not should_keep_line(line, start_date, end_date):
                         skipped_out_of_range += 1
                         continue
                 if record_spec_filter is not None and line[:2] != record_spec_filter:
+                    continue
+                if realtime_spec is not None and line[:2] != requested_spec:
                     continue
 
                 f.write(line)
@@ -268,8 +321,20 @@ if __name__ == "__main__":
     parser.add_argument('--poll-seconds', type=float, default=1.0, help='JVStatus polling interval in seconds')
     parser.add_argument('--overwrite', action='store_true', help='Re-fetch even if the target output file already exists')
     parser.add_argument('--save-path', type=Path, default=None, help='JV-Link local cache/save path, e.g. D:\\JVLinkData')
+    parser.add_argument('--rt-key', type=str, default=None, help='Realtime 16-digit RaceKey for JVRTOpen-backed specs such as O1')
 
     args = parser.parse_args()
 
     setup_logging()
-    fetch_data(args.start, args.end, args.spec, args.out, args.option, args.sid, args.poll_seconds, args.overwrite, args.save_path)
+    fetch_data(
+        args.start,
+        args.end,
+        args.spec,
+        args.out,
+        args.option,
+        args.sid,
+        args.poll_seconds,
+        args.overwrite,
+        args.save_path,
+        args.rt_key,
+    )

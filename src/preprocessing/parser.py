@@ -25,6 +25,31 @@ class JVParser:
             wh_schema[f"ZogenFugo{item_no}"] = (start + 41, 1)
             wh_schema[f"ZogenSa{item_no}"] = (start + 42, 3)
 
+        o1_schema = {
+            "RecordSpec": (0, 2),
+            "DataKubun": (2, 1),
+            "MakeDate": (3, 8),
+            "Year": (11, 4),
+            "MonthDay": (15, 4),
+            "JyoCD": (19, 2),
+            "Kaiji": (21, 2),
+            "Nichiji": (23, 2),
+            "RaceNum": (25, 2),
+            "HappyoTime": (27, 8),
+            "TorokuTosu": (35, 2),
+            "SyussoTosu": (37, 2),
+            "TansyoFlag": (39, 1),
+            "FukusyoFlag": (40, 1),
+            "WakurenFlag": (41, 1),
+            "FukuChakuBaraiKey": (42, 1),
+        }
+        for index in range(28):
+            start = 43 + 8 * index
+            item_no = index + 1
+            o1_schema[f"Umaban{item_no}"] = (start, 2)
+            o1_schema[f"Odds{item_no}"] = (start + 2, 4)
+            o1_schema[f"Ninki{item_no}"] = (start + 6, 2)
+
         self.schemas = {
             "RA": {
                 "RecordSpec": (0, 2),
@@ -113,6 +138,7 @@ class JVParser:
                 "HaronTimeL3": (390, 3),
                 "TimeDiff": (531, 4),
             },
+            "O1": o1_schema,
             "WH": wh_schema,
             "HC": {
                 "RecordSpec": (0, 2),

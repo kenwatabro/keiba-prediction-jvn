@@ -84,6 +84,17 @@ class JVLinkClient:
         )
         return result
 
+    def open_realtime_dataspec(self, dataspec: str, key: str) -> int:
+        """Open a realtime JV-Link stream via JVRTOpen."""
+        self._ensure_initialized()
+
+        result = int(self.jv_link.JVRTOpen(dataspec, key))
+        if result < 0:
+            raise RuntimeError(self._describe_jvrtopen_error(dataspec, result))
+
+        self.logger.info("JVRTOpen succeeded: dataspec=%s key=%s", dataspec, key)
+        return result
+
     def wait_for_download(self, expected_download_count: Optional[int], poll_interval: float = 1.0) -> int:
         """Wait until JVStatus reports that background downloads have completed."""
         self._ensure_initialized()
@@ -195,4 +206,13 @@ class JVLinkClient:
                 "or complete online initial setup from JV-Link settings first."
             )
         return f"JVOpen failed for {dataspec} with code: {code}"
+
+    @staticmethod
+    def _describe_jvrtopen_error(dataspec: str, code: int) -> str:
+        if code == -112:
+            return (
+                f"JVRTOpen failed for {dataspec} with code -112 (JVERR_CONNECT). "
+                "Realtime DataLab connection/login/setup, session state, or network connectivity may be invalid."
+            )
+        return f"JVRTOpen failed for {dataspec} with code: {code}"
 

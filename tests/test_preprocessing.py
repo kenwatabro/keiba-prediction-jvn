@@ -196,6 +196,40 @@ def build_wh_record(
     return bytes(buffer)
 
 
+def build_o1_record(
+    year: str = "2024",
+    month_day: str = "0203",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "02031030",
+    make_date: str | None = None,
+    horse_items: list[dict] | None = None,
+) -> bytes:
+    buffer = bytearray(b" " * 962)
+    write_field(buffer, 1, 2, "O1")
+    write_field(buffer, 4, 8, make_date or (year + month_day))
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, "18")
+    write_field(buffer, 38, 2, "16")
+    write_field(buffer, 40, 1, "1")
+
+    items = horse_items or []
+    for index, item in enumerate(items[:28]):
+        start = 44 + 8 * index
+        write_field(buffer, start, 2, item.get("umaban", f"{index + 1:02d}"))
+        write_field(buffer, start + 2, 4, item.get("odds", "0120"))
+        write_field(buffer, start + 6, 2, item.get("ninki", f"{index + 1:02d}"))
+    return bytes(buffer)
+
+
 def build_hc_record(
     chokyo_date: str = "20240105",
     chokyo_time: str = "0650",
@@ -290,6 +324,17 @@ class JVParserTests(unittest.TestCase):
                 ]
             )
         )
+        o1 = parser.parse_line(
+            build_o1_record(
+                horse_items=[
+                    {
+                        "umaban": "07",
+                        "odds": "0140",
+                        "ninki": "01",
+                    }
+                ]
+            )
+        )
         hc = parser.parse_line(build_hc_record())
         wc = parser.parse_line(build_wc_record())
 
@@ -335,6 +380,10 @@ class JVParserTests(unittest.TestCase):
         self.assertEqual(wh["BaTaijyu1"], "478")
         self.assertEqual(wh["ZogenFugo1"], "-")
         self.assertEqual(wh["ZogenSa1"], "004")
+        self.assertEqual(o1["RecordSpec"], "O1")
+        self.assertEqual(o1["Umaban1"], "07")
+        self.assertEqual(o1["Odds1"], "0140")
+        self.assertEqual(o1["Ninki1"], "01")
         self.assertEqual(hc["RecordSpec"], "HC")
         self.assertEqual(hc["ChokyoDate"], "20240105")
         self.assertEqual(hc["HaronTime4"], "524")
@@ -927,6 +976,69 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(prediction_data.loc[0, "HorseWinRateBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "JockeyStartsBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "TrainerStartsBefore"]), 1.0)
+
+    def test_make_prediction_dataset_can_fill_market_columns_from_o1(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            output_dir = temp_root / "processed"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0106", race_num="05") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0106",
+                        race_num="05",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        kakutei_jyuni="01",
+                    )
+                    + b"\n"
+                )
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        umaban="07",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        odds="    ",
+                        ninki="  ",
+                        kakutei_jyuni="  ",
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_o1_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        horse_items=[{"umaban": "07", "odds": "0140", "ninki": "01"}],
+                    )
+                    + b"\n"
+                )
+
+            make_prediction_dataset(
+                raw_dir=raw_dir,
+                output_dir=output_dir,
+                output_filename="prediction_data.csv",
+                prediction_date="2024-02-03",
+                include_o1=True,
+            )
+
+            prediction_data = pd.read_csv(output_dir / "prediction_data.csv")
+            self.assertEqual(len(prediction_data), 1)
+            self.assertAlmostEqual(float(prediction_data.loc[0, "OddsDecimal"]), 14.0)
+            self.assertEqual(int(prediction_data.loc[0, "Ninki"]), 1)
 
 
 class FetchFilterTests(unittest.TestCase):

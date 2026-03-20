@@ -10,7 +10,14 @@ DATA_LOADER_DIR = PROJECT_ROOT / "src" / "data_loader"
 sys.path.insert(0, str(DATA_LOADER_DIR))
 
 import fetch_raw_data  # noqa: E402
-from fetch_raw_data import build_jvopen_from_time, normalize_option, resolve_dataspec, validate_dataspec_request  # noqa: E402
+from fetch_raw_data import (  # noqa: E402
+    build_jvopen_from_time,
+    normalize_option,
+    resolve_dataspec,
+    resolve_realtime_dataspec,
+    validate_dataspec_request,
+    validate_realtime_request,
+)
 from record_filter import extract_record_date, should_keep_line  # noqa: E402
 
 
@@ -42,6 +49,10 @@ class FetchRawDataTests(unittest.TestCase):
         self.assertEqual(resolve_dataspec("WC"), ("WOOD", None))
         self.assertEqual(resolve_dataspec("RACE"), ("RACE", None))
 
+    def test_resolve_realtime_dataspec_routes_o1_to_0b31(self):
+        self.assertEqual(resolve_realtime_dataspec("O1"), "0B31")
+        self.assertIsNone(resolve_realtime_dataspec("RACE"))
+
     def test_validate_dataspec_request_rejects_setup_mode_for_race_day_streams(self):
         with self.assertRaisesRegex(ValueError, "Use --option 2"):
             validate_dataspec_request("WH", "RACERCVN", "20240101", "20240101", 3)
@@ -49,6 +60,16 @@ class FetchRawDataTests(unittest.TestCase):
     def test_validate_dataspec_request_rejects_date_ranges_for_race_day_streams(self):
         with self.assertRaisesRegex(ValueError, "Historical date-range backfill is not supported"):
             validate_dataspec_request("WH", "RACERCVN", "20240101", "20240131", 2)
+
+    def test_validate_realtime_request_requires_matching_single_day_racekey(self):
+        self.assertEqual(
+            validate_realtime_request("O1", "0B31", "20240106", "20240106", "2024010601010111"),
+            "2024010601010111",
+        )
+        with self.assertRaisesRegex(ValueError, "16-digit RaceKey"):
+            validate_realtime_request("O1", "0B31", "20240106", "20240106", "bad")
+        with self.assertRaisesRegex(ValueError, "single race date"):
+            validate_realtime_request("O1", "0B31", "20240106", "20240107", "2024010601010111")
 
     def test_fetch_data_closes_client_after_success(self):
         with TemporaryDirectory() as tmpdir:
@@ -113,6 +134,31 @@ class FetchRawDataTests(unittest.TestCase):
             lines = path.read_text(encoding="cp932").splitlines()
             self.assertEqual(lines, ["WH" + " " * 9 + "20240106" + "rest"])
 
+    def test_fetch_data_uses_jvrtopen_for_o1(self):
+        with TemporaryDirectory() as tmpdir:
+            client = FakeJVLinkClient(
+                open_result=FakeOpenResult(return_code=1, download_count=0),
+                read_results=[
+                    FakeReadResult(return_code=1, line="O1" + " " * 9 + "20240106" + "rest"),
+                    FakeReadResult(return_code=0),
+                ],
+            )
+            with patch.object(fetch_raw_data, "JVLinkClient", return_value=client):
+                path = fetch_raw_data.fetch_data(
+                    "20240106",
+                    "20240106",
+                    dataspec="O1",
+                    output_dir=tmpdir,
+                    overwrite=True,
+                    rt_key="2024010601010111",
+                )
+
+            self.assertEqual(client.realtime_open_calls[0]["dataspec"], "0B31")
+            self.assertEqual(client.realtime_open_calls[0]["key"], "2024010601010111")
+            self.assertEqual(path.name, "O1_2024010601010111.txt")
+            lines = path.read_text(encoding="cp932").splitlines()
+            self.assertEqual(lines, ["O1" + " " * 9 + "20240106" + "rest"])
+
     def test_record_filter_reads_race_date_for_race_linked_records(self):
         self.assertEqual(extract_record_date("RA" + " " * 9 + "20240106" + "rest"), "20240106")
         self.assertTrue(should_keep_line("SE" + " " * 9 + "20240106" + "rest", "20240101", "20240131"))
@@ -150,6 +196,7 @@ class FakeJVLinkClient:
         self.read_results = list(read_results)
         self.close_calls = 0
         self.open_calls = []
+        self.realtime_open_calls = []
 
     def initialize(self):
         return None
@@ -166,6 +213,15 @@ class FakeJVLinkClient:
             }
         )
         return self.open_result
+
+    def open_realtime_dataspec(self, dataspec, key):
+        self.realtime_open_calls.append(
+            {
+                "dataspec": dataspec,
+                "key": key,
+            }
+        )
+        return 1
 
     def wait_for_download(self, expected_download_count, poll_interval=1.0):
         return expected_download_count
