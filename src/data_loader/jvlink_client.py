@@ -1,9 +1,19 @@
 import logging
+import os
+import shutil
+import sys
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional, Tuple
 
 import win32com.client
+import win32com.client.dynamic
+
+
+JVLINK_PROG_ID = "JVDTLAB.JVLink"
+JVLINK_TYPELIB_PREFIX = "2AB17740-0C41-11D7-916F-0003479BEB3F"
 
 
 @dataclass
@@ -32,10 +42,7 @@ class JVLinkClient:
     def initialize(self) -> None:
         """Initialize the JV-Link COM object."""
         try:
-            try:
-                self.jv_link = win32com.client.gencache.EnsureDispatch("JVDTLAB.JVLink")
-            except Exception:
-                self.jv_link = win32com.client.Dispatch("JVDTLAB.JVLink")
+            self.jv_link = self._create_dispatch()
 
             ret = int(self.jv_link.JVInit(self.sid))
             if ret != 0:
@@ -163,6 +170,98 @@ class JVLinkClient:
     def _ensure_initialized(self) -> None:
         if self.jv_link is None:
             raise RuntimeError("JV-Link is not initialized.")
+
+    def _create_dispatch(self):
+        if self._force_dynamic_dispatch():
+            self.logger.info(
+                "Skipping EnsureDispatch because JVLINK_FORCE_DYNAMIC_DISPATCH is enabled."
+            )
+            return self._create_dynamic_dispatch()
+
+        try:
+            return win32com.client.gencache.EnsureDispatch(JVLINK_PROG_ID)
+        except Exception as exc:
+            self.logger.warning("EnsureDispatch failed, falling back to dynamic dispatch: %s", exc)
+            if self._is_broken_gen_py_cache_error(exc):
+                self._purge_jvlink_gen_py_cache()
+            return self._create_dynamic_dispatch()
+
+    def _create_dynamic_dispatch(self):
+        try:
+            return win32com.client.dynamic.Dispatch(JVLINK_PROG_ID)
+        except Exception as exc:
+            if self._is_broken_gen_py_cache_error(exc):
+                self.logger.warning(
+                    "Dynamic dispatch still hit a broken pywin32 gen_py cache. Purging cache and retrying: %s",
+                    exc,
+                )
+                self._purge_jvlink_gen_py_cache()
+                return win32com.client.dynamic.Dispatch(JVLINK_PROG_ID)
+            raise
+
+    @staticmethod
+    def _force_dynamic_dispatch() -> bool:
+        return os.environ.get("JVLINK_FORCE_DYNAMIC_DISPATCH", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _is_broken_gen_py_cache_error(exc: Exception) -> bool:
+        text = str(exc)
+        return (
+            "win32com.gen_py" in text
+            or "CLSIDToClassMap" in text
+            or "CLSIDToPackageMap" in text
+        )
+
+    def _purge_jvlink_gen_py_cache(self) -> None:
+        removed = []
+        for cache_root in self._iter_gen_py_roots():
+            removed.extend(self._remove_jvlink_entries(cache_root))
+
+        for module_name in list(sys.modules):
+            if module_name.startswith("win32com.gen_py.") and JVLINK_TYPELIB_PREFIX.lower() in module_name.lower():
+                sys.modules.pop(module_name, None)
+
+        if removed:
+            self.logger.warning("Removed broken JV-Link gen_py cache entries: %s", ", ".join(removed))
+
+    @staticmethod
+    def _iter_gen_py_roots():
+        roots = []
+
+        try:
+            generated_path = Path(win32com.client.gencache.GetGeneratePath())
+            roots.append(generated_path)
+        except Exception:
+            pass
+
+        temp_root = Path(tempfile.gettempdir()) / "gen_py"
+        if temp_root not in roots:
+            roots.append(temp_root)
+
+        return [root for root in roots if root.exists()]
+
+    @staticmethod
+    def _remove_jvlink_entries(cache_root: Path):
+        removed = []
+        patterns = [f"{JVLINK_TYPELIB_PREFIX}*", "dicts.dat"]
+
+        for pattern in patterns:
+            for candidate in cache_root.glob(pattern):
+                try:
+                    if candidate.is_dir():
+                        shutil.rmtree(candidate)
+                    else:
+                        candidate.unlink()
+                    removed.append(str(candidate))
+                except OSError:
+                    continue
+
+        return removed
 
     @staticmethod
     def _coerce_tuple(result: Any) -> Tuple[Any, ...]:

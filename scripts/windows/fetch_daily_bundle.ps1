@@ -1,5 +1,5 @@
 param(
-    [string]$PythonCommand = "python",
+    [string]$PythonCommand = "",
     [string]$ProjectRoot = "",
     [string]$OutputDir = "D:\jra-van-raw",
     [string]$SavePath = "D:\JVLinkData",
@@ -19,6 +19,35 @@ if (-not $ProjectRoot) {
     $scriptDir = Split-Path -Parent $scriptPath
     $ProjectRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
 }
+
+function Resolve-PythonCommand {
+    param([string]$RequestedCommand)
+
+    if ($RequestedCommand) {
+        return $RequestedCommand
+    }
+
+    $candidates = @(
+        "C:\Users\kenos\AppData\Local\Programs\Python\Python313-32\python.exe",
+        "py -3.13-32",
+        "python"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -like "*.exe") {
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+            continue
+        }
+
+        return $candidate
+    }
+
+    throw "No usable Python command found. Pass -PythonCommand explicitly."
+}
+
+$PythonCommand = Resolve-PythonCommand $PythonCommand
 
 if (-not $StartDate) {
     $StartDate = (Get-Date).ToString("yyyyMMdd")
@@ -53,6 +82,9 @@ function Invoke-Fetch {
 
     Write-Host ""
     Write-Host "=== Fetch $Spec ($StartDate - $EndDate) ==="
+    Write-Host "Python command: $PythonCommand"
+    Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
+    $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
     & $PythonCommand @args
     if ($LASTEXITCODE -ne 0) {
         throw "fetch_raw_data.py failed for spec=$Spec exit_code=$LASTEXITCODE"
