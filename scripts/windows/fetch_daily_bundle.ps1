@@ -1,6 +1,6 @@
 param(
     [string]$PythonCommand = "python",
-    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [string]$ProjectRoot = "",
     [string]$OutputDir = "D:\jra-van-raw",
     [string]$SavePath = "D:\JVLinkData",
     [string]$StartDate = "",
@@ -10,6 +10,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $ProjectRoot) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) {
+        throw "Could not determine script path. Pass -ProjectRoot explicitly."
+    }
+    $scriptDir = Split-Path -Parent $scriptPath
+    $ProjectRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
+}
 
 if (-not $StartDate) {
     $StartDate = (Get-Date).ToString("yyyyMMdd")
