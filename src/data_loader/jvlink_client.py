@@ -91,11 +91,18 @@ class JVLinkClient:
         )
         return result
 
-    def open_realtime_dataspec(self, dataspec: str, key: str) -> int:
+    def open_realtime_dataspec(self, dataspec: str, key: str, allow_empty: bool = False) -> int:
         """Open a realtime JV-Link stream via JVRTOpen."""
         self._ensure_initialized()
 
         result = int(self.jv_link.JVRTOpen(dataspec, key))
+        if result == -1 and allow_empty:
+            self.logger.warning(
+                "JVRTOpen returned -1 for dataspec=%s key=%s. No realtime data is currently available.",
+                dataspec,
+                key,
+            )
+            return result
         if result < 0:
             raise RuntimeError(self._describe_jvrtopen_error(dataspec, result))
 
@@ -308,6 +315,13 @@ class JVLinkClient:
 
     @staticmethod
     def _describe_jvrtopen_error(dataspec: str, code: int) -> str:
+        if code == -1:
+            return (
+                f"JVRTOpen failed for {dataspec} with code -1. "
+                "No realtime data is currently available for that key. "
+                "For odds snapshots such as O1, this usually means the target race is not currently on sale "
+                "or the requested race date is not part of the current realtime distribution window."
+            )
         if code == -112:
             return (
                 f"JVRTOpen failed for {dataspec} with code -112 (JVERR_CONNECT). "

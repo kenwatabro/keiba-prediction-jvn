@@ -159,6 +159,28 @@ class FetchRawDataTests(unittest.TestCase):
             lines = path.read_text(encoding="cp932").splitlines()
             self.assertEqual(lines, ["O1" + " " * 9 + "20240106" + "rest"])
 
+    def test_fetch_data_can_treat_missing_realtime_snapshot_as_empty(self):
+        with TemporaryDirectory() as tmpdir:
+            client = FakeJVLinkClient(
+                open_result=FakeOpenResult(return_code=1, download_count=0),
+                read_results=[],
+                realtime_return_code=-1,
+            )
+            with patch.object(fetch_raw_data, "JVLinkClient", return_value=client):
+                path = fetch_raw_data.fetch_data(
+                    "20240106",
+                    "20240106",
+                    dataspec="O1",
+                    output_dir=tmpdir,
+                    overwrite=True,
+                    rt_key="2024010601010111",
+                    allow_empty=True,
+                )
+
+            self.assertIsNone(path)
+            self.assertEqual(client.close_calls, 1)
+            self.assertEqual(client.realtime_open_calls[0]["dataspec"], "0B31")
+
     def test_record_filter_reads_race_date_for_race_linked_records(self):
         self.assertEqual(extract_record_date("RA" + " " * 9 + "20240106" + "rest"), "20240106")
         self.assertTrue(should_keep_line("SE" + " " * 9 + "20240106" + "rest", "20240101", "20240131"))
@@ -191,9 +213,10 @@ class FakeReadResult:
 
 
 class FakeJVLinkClient:
-    def __init__(self, open_result, read_results):
+    def __init__(self, open_result, read_results, realtime_return_code=1):
         self.open_result = open_result
         self.read_results = list(read_results)
+        self.realtime_return_code = realtime_return_code
         self.close_calls = 0
         self.open_calls = []
         self.realtime_open_calls = []
@@ -214,14 +237,15 @@ class FakeJVLinkClient:
         )
         return self.open_result
 
-    def open_realtime_dataspec(self, dataspec, key):
+    def open_realtime_dataspec(self, dataspec, key, allow_empty=False):
         self.realtime_open_calls.append(
             {
                 "dataspec": dataspec,
                 "key": key,
+                "allow_empty": allow_empty,
             }
         )
-        return 1
+        return self.realtime_return_code
 
     def wait_for_download(self, expected_download_count, poll_interval=1.0):
         return expected_download_count

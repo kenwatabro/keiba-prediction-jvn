@@ -101,6 +101,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_wh.ps1 
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1.ps1 -RaceKey 2026031406010111 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
 ```
 
+To poll live single-win odds for all pending races on a target day, first export RaceKeys on WSL:
+
+```bash
+./.venv/bin/python src/preprocessing/export_pending_racekeys.py \
+  --prediction-date 2026-03-21 \
+  --output-dir /mnt/d/jra-van-raw/racekeys \
+  --output-filename 20260321.txt
+```
+
+Then run the Windows batch wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1_batch.ps1 -RaceKeyFile D:\jra-van-raw\racekeys\20260321.txt -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+```
+
+The batch wrapper uses `--allow-empty`, so races that are not yet on sale are skipped without aborting the whole polling run.
+
 If a Windows fetch fails with a pywin32 `gen_py` / `CLSIDToClassMap` / `CLSIDToPackageMap` error, repair the local pywin32 cache once and retry:
 
 ```powershell
@@ -190,6 +207,14 @@ For live market-aware prediction, fetch `O1` for the target race and build a pen
   --output-filename prediction_data_market.csv
 ```
 When an `O1_*.txt` snapshot is present, pending rows with missing market columns are filled from the latest `O1` snapshot for each `RaceKey + Umaban`. That makes the resulting CSV compatible with a model trained using `--include-market-features`.
+
+If you need the pending `RaceKey` list itself, export it directly:
+
+```bash
+./.venv/bin/python src/preprocessing/export_pending_racekeys.py \
+  --prediction-date 2026-03-14 \
+  --output-filename pending_race_keys.txt
+```
 
 ### 3c. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:

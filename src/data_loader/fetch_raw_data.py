@@ -185,6 +185,7 @@ def fetch_data(
     overwrite=False,
     save_path=None,
     rt_key=None,
+    allow_empty=False,
 ):
     logger = logging.getLogger(__name__)
     if JVLinkClient is None:
@@ -221,7 +222,10 @@ def fetch_data(
                 requested_spec,
                 realtime_key,
             )
-            client.open_realtime_dataspec(realtime_spec, realtime_key)
+            realtime_result = client.open_realtime_dataspec(realtime_spec, realtime_key, allow_empty=allow_empty)
+            if realtime_result == -1:
+                logger.warning("No realtime %s snapshot was available for key=%s.", requested_spec, realtime_key)
+                return None
         else:
             effective_option = normalize_option(start_date, end_date, option)
             if record_spec_filter is not None and option is None:
@@ -322,6 +326,7 @@ if __name__ == "__main__":
     parser.add_argument('--overwrite', action='store_true', help='Re-fetch even if the target output file already exists')
     parser.add_argument('--save-path', type=Path, default=None, help='JV-Link local cache/save path, e.g. D:\\JVLinkData')
     parser.add_argument('--rt-key', type=str, default=None, help='Realtime 16-digit RaceKey for JVRTOpen-backed specs such as O1')
+    parser.add_argument('--allow-empty', action='store_true', help='Treat missing realtime snapshots such as JVRTOpen -1 as a warning instead of a fatal error')
 
     args = parser.parse_args()
 
@@ -337,4 +342,5 @@ if __name__ == "__main__":
         args.overwrite,
         args.save_path,
         args.rt_key,
+        args.allow_empty,
     )
