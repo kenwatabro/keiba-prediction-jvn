@@ -101,6 +101,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_wh.ps1 
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1.ps1 -RaceKey 2026031406010111 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
 ```
 
+If a Windows fetch fails with a pywin32 `gen_py` / `CLSIDToClassMap` / `CLSIDToPackageMap` error, repair the local pywin32 cache once and retry:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\repair_pywin32_gen_py.ps1
+```
+
+The Windows wrapper scripts also set `JVLINK_FORCE_DYNAMIC_DISPATCH=1` before calling Python so broken generated COM wrappers are bypassed by default.
+
 Recommended schedule:
 
 - once every evening after racing: `fetch_daily_bundle.ps1`

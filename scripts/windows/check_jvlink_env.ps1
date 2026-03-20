@@ -52,7 +52,12 @@ try {
     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($jv)
 } catch {
     Write-Host "COM instantiation failed: $($_.Exception.Message)"
+    if ([Environment]::Is64BitProcess) {
+        Write-Host "Note: 64-bit PowerShell can fail here even when 32-bit Python can still use JV-Link."
+    }
 }
 
 Write-Section "Next action"
-Write-Host "If any of the checks above fail, install/repair Windows Python, pywin32, JV-Link, or the DataLab subscription before running fetch_raw_data.py."
+Write-Host "If pywin32/JV-Link checks fail with a gen_py / CLSIDToClassMap / CLSIDToPackageMap error,"
+Write-Host "run scripts\\windows\\repair_pywin32_gen_py.ps1 once, then retry the fetch wrapper."
+Write-Host "If checks still fail after that, install/repair Windows Python, pywin32, JV-Link, or the DataLab subscription."
