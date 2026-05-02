@@ -35,9 +35,36 @@ def build_args(temp_root: Path) -> argparse.Namespace:
     )
     pd.DataFrame(
         [
-            {"RaceDate": "2026-05-02", "RaceKey": "2026050205010101", "Umaban": 1, "FeatureA": 0.1, "FeatureB": 1},
-            {"RaceDate": "2026-05-02", "RaceKey": "2026050205010101", "Umaban": 2, "FeatureA": 0.2, "FeatureB": 0},
-            {"RaceDate": "2026-05-03", "RaceKey": "2026050308010101", "Umaban": 1, "FeatureA": 0.3, "FeatureB": 1},
+            {
+                "RaceDate": "2026-05-02",
+                "RaceKey": "2026050205010101",
+                "JyoCD": "05",
+                "RaceNum": 1,
+                "HassoTime": 1005,
+                "Umaban": 1,
+                "FeatureA": 0.1,
+                "FeatureB": 1,
+            },
+            {
+                "RaceDate": "2026-05-02",
+                "RaceKey": "2026050205010101",
+                "JyoCD": "05",
+                "RaceNum": 1,
+                "HassoTime": 1005,
+                "Umaban": 2,
+                "FeatureA": 0.2,
+                "FeatureB": 0,
+            },
+            {
+                "RaceDate": "2026-05-03",
+                "RaceKey": "2026050308010101",
+                "JyoCD": "08",
+                "RaceNum": 1,
+                "HassoTime": 1010,
+                "Umaban": 1,
+                "FeatureA": 0.3,
+                "FeatureB": 1,
+            },
         ]
     ).to_csv(prediction_source, index=False)
     pd.DataFrame([{"RaceDate": "2026-04-26", "RaceKey": "2026042605010101"}]).to_csv(train_data, index=False)
@@ -95,6 +122,8 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertIn("weekend_20260501/model.txt", names)
             self.assertIn("weekend_20260501/features.json", names)
             self.assertIn("weekend_20260501/model.features.json", names)
+            self.assertIn("weekend_20260501/prediction_base_weekend.csv", names)
+            self.assertIn("weekend_20260501/racekeys_weekend.txt", names)
             self.assertIn("weekend_20260501/manifest.json", names)
 
     def test_prediction_date_filters_package_rows(self):
@@ -116,9 +145,32 @@ class WeekendPackageTests(unittest.TestCase):
             features_path = temp_root / "features.json"
             prediction_path = temp_root / "prediction.csv"
             features_path.write_text(json.dumps({"feature_columns": ["FeatureA", "MissingFeature"]}), encoding="utf-8")
-            pd.DataFrame([{"RaceKey": "2026050205010101", "FeatureA": 0.1}]).to_csv(prediction_path, index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "RaceDate": "2026-05-02",
+                        "RaceKey": "2026050205010101",
+                        "JyoCD": "05",
+                        "RaceNum": 1,
+                        "HassoTime": 1005,
+                        "Umaban": 1,
+                        "FeatureA": 0.1,
+                    }
+                ]
+            ).to_csv(prediction_path, index=False)
 
             with self.assertRaisesRegex(ValueError, "MissingFeature"):
+                validate_prediction_base(prediction_path, features_path)
+
+    def test_validate_prediction_base_rejects_missing_race_day_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            features_path = temp_root / "features.json"
+            prediction_path = temp_root / "prediction.csv"
+            features_path.write_text(json.dumps({"feature_columns": ["FeatureA"]}), encoding="utf-8")
+            pd.DataFrame([{"RaceKey": "2026050205010101", "FeatureA": 0.1}]).to_csv(prediction_path, index=False)
+
+            with self.assertRaisesRegex(ValueError, "RaceDate"):
                 validate_prediction_base(prediction_path, features_path)
 
     def test_write_racekeys_deduplicates_and_sorts(self):

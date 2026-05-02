@@ -72,6 +72,13 @@ def summarize_csv_dates(csv_path: Path) -> dict[str, object]:
 def validate_prediction_base(prediction_path: Path, features_path: Path) -> dict[str, object]:
     feature_columns = load_feature_columns(features_path)
     prediction_df = pd.read_csv(prediction_path, low_memory=False)
+    required_columns = ["RaceDate", "RaceKey", "JyoCD", "RaceNum", "HassoTime", "Umaban"]
+    missing_required = [column for column in required_columns if column not in prediction_df.columns]
+    if missing_required:
+        raise ValueError(
+            "prediction_base_weekend.csv is missing required race-day columns: "
+            + ", ".join(missing_required)
+        )
     missing = [column for column in feature_columns if column not in prediction_df.columns]
     if missing:
         raise ValueError(
@@ -79,8 +86,6 @@ def validate_prediction_base(prediction_path: Path, features_path: Path) -> dict
             + ", ".join(missing[:20])
             + (" ..." if len(missing) > 20 else "")
         )
-    if "RaceKey" not in prediction_df.columns:
-        raise ValueError("prediction_base_weekend.csv must contain RaceKey.")
     return {
         "rows": int(len(prediction_df)),
         "race_count": int(prediction_df["RaceKey"].nunique()),
@@ -206,6 +211,7 @@ def write_manifest(
         "artifacts": {
             "model": model_path.name,
             "features": features_path.name,
+            "model_features_metadata": build_feature_metadata_path(model_path).name,
             "prediction_base": prediction_path.name,
             "racekeys": racekeys_path.name,
             "tarball": str(tarball_path),
