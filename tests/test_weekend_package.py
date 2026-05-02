@@ -212,6 +212,30 @@ class WeekendPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "RaceDate"):
                 validate_prediction_base(prediction_path, features_path)
 
+    def test_validate_prediction_base_rejects_missing_umaban(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            features_path = temp_root / "features.json"
+            prediction_path = temp_root / "prediction.csv"
+            features_path.write_text(json.dumps({"feature_columns": ["FeatureA"]}), encoding="utf-8")
+            pd.DataFrame(
+                [
+                    {
+                        "RaceDate": "2026-05-03",
+                        "RaceKey": "2026050304010201",
+                        "JyoCD": "04",
+                        "RaceNum": 1,
+                        "HassoTime": 1005,
+                        "Wakuban": 0,
+                        "Umaban": 0,
+                        "FeatureA": 0.1,
+                    }
+                ]
+            ).to_csv(prediction_path, index=False)
+
+            with self.assertRaisesRegex(ValueError, "missing Wakuban/Umaban"):
+                validate_prediction_base(prediction_path, features_path)
+
     def test_write_racekeys_deduplicates_and_sorts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

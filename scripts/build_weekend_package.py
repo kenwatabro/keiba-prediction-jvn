@@ -79,6 +79,25 @@ def validate_prediction_base(prediction_path: Path, features_path: Path) -> dict
             "prediction_base_weekend.csv is missing required race-day columns: "
             + ", ".join(missing_required)
         )
+    umaban = pd.to_numeric(prediction_df["Umaban"], errors="coerce").fillna(0)
+    missing_number_mask = umaban.le(0)
+    if "Wakuban" in prediction_df.columns:
+        wakuban = pd.to_numeric(prediction_df["Wakuban"], errors="coerce").fillna(0)
+        missing_number_mask = missing_number_mask | wakuban.le(0)
+    if missing_number_mask.any():
+        missing_rows = prediction_df.loc[missing_number_mask].copy()
+        race_dates = pd.to_datetime(missing_rows["RaceDate"], errors="coerce").dt.strftime("%Y-%m-%d")
+        sample_racekeys = sorted(missing_rows["RaceKey"].dropna().astype(str).unique().tolist())[:10]
+        counts_by_date = {
+            str(date): int(count)
+            for date, count in race_dates.value_counts(dropna=False).sort_index().items()
+        }
+        raise ValueError(
+            "prediction_base_weekend.csv contains rows with missing Wakuban/Umaban. "
+            "Refetch finalized race-card data before packaging. "
+            f"rows={int(missing_number_mask.sum())}, races={int(missing_rows['RaceKey'].nunique())}, "
+            f"counts_by_date={counts_by_date}, sample_racekeys={sample_racekeys}"
+        )
     missing = [column for column in feature_columns if column not in prediction_df.columns]
     if missing:
         raise ValueError(
