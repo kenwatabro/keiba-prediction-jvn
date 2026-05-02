@@ -246,6 +246,7 @@ scripts/build_and_send_weekend_package.sh \
   --prediction-date 2026-05-03
 ```
 By default this copies `data/packages/weekend_package_YYYYMMDD.tar.gz` to `k@192.168.0.100:~/projects/keiba-prediction-jvn/data/packages/`.
+The transfer helper reuses `data/processed/train_data.csv` by default. Add `--build-train-data` only when you intentionally want to rebuild the training CSV from all raw files.
 
 ### 3d. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:

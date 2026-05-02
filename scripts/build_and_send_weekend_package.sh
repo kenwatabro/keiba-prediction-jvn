@@ -11,7 +11,7 @@ RAW_DIR="${PROJECT_ROOT}/data/raw"
 TRAIN_DATA="${PROJECT_ROOT}/data/processed/train_data.csv"
 REMOTE="k@192.168.0.100"
 REMOTE_DIR="~/projects/keiba-prediction-jvn/data/packages"
-BUILD_TRAIN_DATA=1
+BUILD_TRAIN_DATA=0
 DROP_RAW_IDS=1
 INCLUDE_HC=1
 INCLUDE_WC=1
@@ -35,7 +35,7 @@ Defaults:
   --remote k@192.168.0.100
   --remote-dir ~/projects/keiba-prediction-jvn/data/packages
   --package-root ./data/packages
-  --build-train-data
+  reuse ./data/processed/train_data.csv
   --drop-raw-ids
   --include-hc
   --include-wc
@@ -49,7 +49,7 @@ Options:
   --raw-dir PATH
   --train-data PATH
   --package-root PATH
-  --no-build-train-data
+  --build-train-data                 Rebuild train_data from raw files before training.
   --keep-raw-ids
   --include-o1
   --include-wh
@@ -108,8 +108,8 @@ while [[ $# -gt 0 ]]; do
       PACKAGE_ROOT="$2"
       shift 2
       ;;
-    --no-build-train-data)
-      BUILD_TRAIN_DATA=0
+    --build-train-data)
+      BUILD_TRAIN_DATA=1
       shift
       ;;
     --keep-raw-ids)
@@ -164,6 +164,12 @@ fi
 
 if [[ "${DRY_RUN}" != "1" && ! -x "${PYTHON}" ]]; then
   echo "Python executable not found or not executable: ${PYTHON}" >&2
+  exit 1
+fi
+
+if [[ "${DRY_RUN}" != "1" && "${BUILD_TRAIN_DATA}" != "1" && ! -f "${TRAIN_DATA}" ]]; then
+  echo "Training data not found: ${TRAIN_DATA}" >&2
+  echo "Run with --build-train-data to rebuild it from raw files." >&2
   exit 1
 fi
 
