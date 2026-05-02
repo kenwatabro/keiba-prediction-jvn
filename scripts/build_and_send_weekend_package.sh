@@ -18,6 +18,8 @@ INCLUDE_WC=1
 INCLUDE_WH=0
 INCLUDE_O1=0
 INCLUDE_MARKET_FEATURES=0
+PREDICTION_BASE_SOURCE=""
+REBUILD_PREDICTION_BASE=0
 PREDICTION_DATES=()
 DRY_RUN=0
 
@@ -49,6 +51,8 @@ Options:
   --raw-dir PATH
   --train-data PATH
   --package-root PATH
+  --prediction-base-source PATH      Reuse an existing prediction_base_weekend.csv.
+  --rebuild-prediction-base          Rebuild prediction_base_weekend.csv from raw files.
   --build-train-data                 Rebuild train_data from raw files before training.
   --keep-raw-ids
   --include-o1
@@ -107,6 +111,14 @@ while [[ $# -gt 0 ]]; do
     --package-root)
       PACKAGE_ROOT="$2"
       shift 2
+      ;;
+    --prediction-base-source)
+      PREDICTION_BASE_SOURCE="$2"
+      shift 2
+      ;;
+    --rebuild-prediction-base)
+      REBUILD_PREDICTION_BASE=1
+      shift
       ;;
     --build-train-data)
       BUILD_TRAIN_DATA=1
@@ -182,6 +194,22 @@ BUILD_ARGS=(
   --train-data "${TRAIN_DATA}"
 )
 
+TARBALL="${PACKAGE_ROOT}/weekend_package_${PACKAGE_DATE}.tar.gz"
+PACKAGE_DIR="${PACKAGE_ROOT}/weekend_${PACKAGE_DATE}"
+DEFAULT_PREDICTION_BASE_SOURCE="${PACKAGE_DIR}/prediction_base_weekend.csv"
+
+if [[ -z "${PREDICTION_BASE_SOURCE}" && "${REBUILD_PREDICTION_BASE}" != "1" && -f "${DEFAULT_PREDICTION_BASE_SOURCE}" ]]; then
+  PREDICTION_BASE_SOURCE="${DEFAULT_PREDICTION_BASE_SOURCE}"
+fi
+
+if [[ -n "${PREDICTION_BASE_SOURCE}" ]]; then
+  BUILD_ARGS+=(--prediction-base-source "${PREDICTION_BASE_SOURCE}")
+  echo "Reusing prediction base: ${PREDICTION_BASE_SOURCE}"
+elif [[ "${REBUILD_PREDICTION_BASE}" != "1" ]]; then
+  echo "No reusable prediction base found at ${DEFAULT_PREDICTION_BASE_SOURCE}."
+  echo "build_weekend_package.py will build it from raw files this time."
+fi
+
 if [[ "${BUILD_TRAIN_DATA}" == "1" ]]; then
   BUILD_ARGS+=(--build-train-data)
 fi
@@ -206,9 +234,6 @@ fi
 for prediction_date in "${PREDICTION_DATES[@]}"; do
   BUILD_ARGS+=(--prediction-date "${prediction_date}")
 done
-
-TARBALL="${PACKAGE_ROOT}/weekend_package_${PACKAGE_DATE}.tar.gz"
-PACKAGE_DIR="${PACKAGE_ROOT}/weekend_${PACKAGE_DATE}"
 
 echo "Building weekend package ${PACKAGE_DATE}..."
 run_cmd "${BUILD_ARGS[@]}"

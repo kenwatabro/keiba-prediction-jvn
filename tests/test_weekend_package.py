@@ -13,7 +13,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from build_weekend_package import build_weekend_package, validate_prediction_base, write_racekeys  # noqa: E402
+from build_weekend_package import (  # noqa: E402
+    build_weekend_package,
+    filter_prediction_dates,
+    validate_prediction_base,
+    write_racekeys,
+)
 
 
 def build_args(temp_root: Path) -> argparse.Namespace:
@@ -139,6 +144,24 @@ class WeekendPackageTests(unittest.TestCase):
             racekeys = (package_dir / "racekeys_weekend.txt").read_text(encoding="utf-8").splitlines()
             self.assertEqual(racekeys, ["2026050308010101"])
 
+    def test_prediction_base_source_can_be_same_as_package_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            args = build_args(temp_root)
+            package_dir, _ = build_weekend_package(args)
+
+            args.prediction_base_source = str(package_dir / "prediction_base_weekend.csv")
+            args.prediction_date = ["2026-05-02", "2026-05-03"]
+
+            rebuilt_package_dir, _ = build_weekend_package(args)
+
+            self.assertEqual(rebuilt_package_dir, package_dir)
+            prediction_df = pd.read_csv(package_dir / "prediction_base_weekend.csv")
+            self.assertEqual(
+                sorted(pd.to_datetime(prediction_df["RaceDate"]).dt.strftime("%Y-%m-%d").unique().tolist()),
+                ["2026-05-02", "2026-05-03"],
+            )
+
     def test_validate_prediction_base_rejects_missing_feature_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -190,6 +213,19 @@ class WeekendPackageTests(unittest.TestCase):
 
             self.assertEqual(racekeys, ["2026050205010101", "2026050308010101"])
             self.assertEqual(racekeys_path.read_text(encoding="utf-8"), "2026050205010101\n2026050308010101\n")
+
+    def test_filter_prediction_dates_rejects_missing_requested_date(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            prediction_path = temp_root / "prediction.csv"
+            pd.DataFrame(
+                [
+                    {"RaceDate": "2026-05-02", "RaceKey": "2026050205010101"},
+                ]
+            ).to_csv(prediction_path, index=False)
+
+            with self.assertRaisesRegex(ValueError, "2026-05-03"):
+                filter_prediction_dates(prediction_path, ["2026-05-02", "2026-05-03"])
 
 
 if __name__ == "__main__":

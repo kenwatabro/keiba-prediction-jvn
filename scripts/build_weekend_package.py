@@ -161,6 +161,10 @@ def filter_prediction_dates(prediction_path: Path, prediction_dates: list[str]) 
     filtered = df.loc[race_dates.isin(dates)].copy()
     if filtered.empty:
         raise ValueError(f"No prediction rows matched --prediction-date values: {sorted(dates)}")
+    matched_dates = set(pd.to_datetime(filtered["RaceDate"], errors="coerce").dt.strftime("%Y-%m-%d").dropna())
+    missing_dates = sorted(dates - matched_dates)
+    if missing_dates:
+        raise ValueError(f"prediction_base_weekend.csv is missing requested dates: {missing_dates}")
     filtered.to_csv(prediction_path, index=False)
 
 
@@ -170,7 +174,8 @@ def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -
         source = Path(args.prediction_base_source)
         if not source.exists():
             raise FileNotFoundError(f"Prediction base source not found: {source}")
-        shutil.copy2(source, prediction_path)
+        if source.resolve() != prediction_path.resolve():
+            shutil.copy2(source, prediction_path)
         filter_prediction_dates(prediction_path, args.prediction_date)
         return prediction_path
 
