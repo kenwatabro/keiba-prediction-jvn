@@ -211,6 +211,24 @@ class ModelPipelineTests(unittest.TestCase):
             self.assertNotIn("ChokyosiCode", feature_columns)
             self.assertNotIn("KisyuCode", feature_columns)
 
+    def test_select_feature_columns_excludes_policy_only_columns(self):
+        training_df = build_ranking_training_dataframe()
+        training_df["JyokenName"] = "3歳未勝利"
+        training_df["FutanBefore"] = 55
+        training_df["Blinker"] = "1"
+        training_df["KisyuCodeBefore"] = "54321"
+        training_df["MinaraiCDBefore"] = "0"
+        training_df["KyakusituKubun"] = "2"
+
+        feature_columns = select_feature_columns(training_df, "TargetWin")
+
+        self.assertNotIn("JyokenName", feature_columns)
+        self.assertNotIn("FutanBefore", feature_columns)
+        self.assertNotIn("Blinker", feature_columns)
+        self.assertNotIn("KisyuCodeBefore", feature_columns)
+        self.assertNotIn("MinaraiCDBefore", feature_columns)
+        self.assertNotIn("KyakusituKubun", feature_columns)
+
     def test_filter_by_date_range_keeps_expected_rows(self):
         training_df = build_training_dataframe()
         training_df["RaceDate"] = pd.to_datetime(training_df["RaceDate"])

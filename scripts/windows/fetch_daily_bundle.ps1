@@ -64,7 +64,8 @@ if (-not (Test-Path $fetchScript)) {
 function Invoke-Fetch {
     param(
         [string]$Spec,
-        [int]$Option
+        [int]$Option,
+        [bool]$Optional = $false
     )
 
     $args = @(
@@ -87,15 +88,19 @@ function Invoke-Fetch {
     $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
     & $PythonCommand @args
     if ($LASTEXITCODE -ne 0) {
+        if ($Optional) {
+            Write-Warning "fetch_raw_data.py failed for optional spec=$Spec exit_code=$LASTEXITCODE. Continuing."
+            return
+        }
         throw "fetch_raw_data.py failed for spec=$Spec exit_code=$LASTEXITCODE"
     }
 }
 
 Invoke-Fetch -Spec "RACE" -Option 3
-Invoke-Fetch -Spec "SLOP" -Option 3
+Invoke-Fetch -Spec "SLOP" -Option 3 -Optional $true
 
 if (-not $SkipWood) {
-    Invoke-Fetch -Spec "WOOD" -Option 3
+    Invoke-Fetch -Spec "WOOD" -Option 3 -Optional $true
 }
 
 Write-Host ""

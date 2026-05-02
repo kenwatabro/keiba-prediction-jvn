@@ -11,7 +11,7 @@ PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
 sys.path.insert(0, str(PREPROCESSING_DIR))
 sys.path.insert(0, str((PROJECT_ROOT / "src" / "data_loader").resolve()))
 
-from make_dataset import make_dataset, make_prediction_dataset  # noqa: E402
+from make_dataset import build_umaren_pair_label_frame, build_wide_pair_label_frame, make_dataset, make_prediction_dataset  # noqa: E402
 from parser import JVParser  # noqa: E402
 from record_filter import should_keep_line  # noqa: E402
 
@@ -54,6 +54,7 @@ def build_ra_record(
     siba_baba_cd: str = "2",
     dirt_baba_cd: str = "3",
     tenko_baba: str = "123",
+    jyoken_name: str = "Test Race",
 ) -> bytes:
     buffer = bytearray(b" " * 1000)
     write_field(buffer, 1, 2, "RA")
@@ -71,7 +72,7 @@ def build_ra_record(
     write_field(buffer, 629, 3, jyoken_cd3)
     write_field(buffer, 632, 3, jyoken_cd4)
     write_field(buffer, 635, 3, jyoken_cd5)
-    write_field(buffer, 638, 60, "Test Race")
+    write_field(buffer, 638, 60, jyoken_name)
     write_field(buffer, 698, 4, kyori)
     write_field(buffer, 706, 2, track_cd)
     write_field(buffer, 710, 2, course_kubun_cd)
@@ -118,6 +119,7 @@ def build_se_record(
     haron_time_l4: str = "000",
     haron_time_l3: str = "000",
     time_diff: str = "0000",
+    kyakusitu_kubun: str = "2",
     kakutei_jyuni: str = "02",
     odds: str = "0250",
     ninki: str = "03",
@@ -161,6 +163,7 @@ def build_se_record(
     write_field(buffer, 388, 3, haron_time_l4)
     write_field(buffer, 391, 3, haron_time_l3)
     write_field(buffer, 532, 4, time_diff)
+    write_field(buffer, 553, 1, kyakusitu_kubun)
     return bytes(buffer)
 
 
@@ -227,6 +230,114 @@ def build_o1_record(
         write_field(buffer, start, 2, item.get("umaban", f"{index + 1:02d}"))
         write_field(buffer, start + 2, 4, item.get("odds", "0120"))
         write_field(buffer, start + 6, 2, item.get("ninki", f"{index + 1:02d}"))
+    return bytes(buffer)
+
+
+def build_o3_record(
+    year: str = "2024",
+    month_day: str = "0203",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "02031030",
+    make_date: str | None = None,
+    pair_items: list[dict] | None = None,
+) -> bytes:
+    buffer = bytearray(b" " * 2654)
+    write_field(buffer, 1, 2, "O3")
+    write_field(buffer, 4, 8, make_date or (year + month_day))
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, "18")
+    write_field(buffer, 38, 2, "16")
+    write_field(buffer, 40, 1, "1")
+
+    items = pair_items or []
+    for index, item in enumerate(items[:153]):
+        start = 41 + 17 * index
+        write_field(buffer, start, 4, item.get("kumi", "0102"))
+        write_field(buffer, start + 4, 5, item.get("odds_low", "01000"))
+        write_field(buffer, start + 9, 5, item.get("odds_high", "01200"))
+        write_field(buffer, start + 14, 3, item.get("ninki", f"{index + 1:03d}"))
+    return bytes(buffer)
+
+
+def build_o2_record(
+    year: str = "2024",
+    month_day: str = "0203",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    happyo_time: str = "02031030",
+    make_date: str | None = None,
+    pair_items: list[dict] | None = None,
+) -> bytes:
+    buffer = bytearray(b" " * 2043)
+    write_field(buffer, 1, 2, "O2")
+    write_field(buffer, 4, 8, make_date or (year + month_day))
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 8, happyo_time)
+    write_field(buffer, 36, 2, "18")
+    write_field(buffer, 38, 2, "16")
+    write_field(buffer, 40, 1, "1")
+
+    items = pair_items or []
+    for index, item in enumerate(items[:153]):
+        start = 41 + 13 * index
+        write_field(buffer, start, 4, item.get("kumi", "0102"))
+        write_field(buffer, start + 4, 6, item.get("odds", "012300"))
+        write_field(buffer, start + 10, 3, item.get("ninki", f"{index + 1:03d}"))
+    return bytes(buffer)
+
+
+def build_hr_record(
+    year: str = "2024",
+    month_day: str = "0203",
+    jyo_cd: str = "01",
+    kaiji: str = "01",
+    nichiji: str = "01",
+    race_num: str = "11",
+    make_date: str | None = None,
+    umaren_items: list[dict] | None = None,
+    wide_items: list[dict] | None = None,
+) -> bytes:
+    buffer = bytearray(b" " * 719)
+    write_field(buffer, 1, 2, "HR")
+    write_field(buffer, 4, 8, make_date or (year + month_day))
+    write_field(buffer, 12, 4, year)
+    write_field(buffer, 16, 4, month_day)
+    write_field(buffer, 20, 2, jyo_cd)
+    write_field(buffer, 22, 2, kaiji)
+    write_field(buffer, 24, 2, nichiji)
+    write_field(buffer, 26, 2, race_num)
+    write_field(buffer, 28, 2, "18")
+    write_field(buffer, 30, 2, "16")
+
+    umaren = umaren_items or []
+    for index, item in enumerate(umaren[:3]):
+        start = 246 + 16 * index
+        write_field(buffer, start, 4, item.get("kumi", "0102"))
+        write_field(buffer, start + 4, 9, item.get("pay", "000001000"))
+        write_field(buffer, start + 13, 3, item.get("ninki", f"{index + 1:03d}"))
+
+    items = wide_items or []
+    for index, item in enumerate(items[:7]):
+        start = 294 + 16 * index
+        write_field(buffer, start, 4, item.get("kumi", "0102"))
+        write_field(buffer, start + 4, 9, item.get("pay", "000001000"))
+        write_field(buffer, start + 13, 3, item.get("ninki", f"{index + 1:03d}"))
     return bytes(buffer)
 
 
@@ -335,6 +446,47 @@ class JVParserTests(unittest.TestCase):
                 ]
             )
         )
+        o2 = parser.parse_line(
+            build_o2_record(
+                pair_items=[
+                    {
+                        "kumi": "0307",
+                        "odds": "012340",
+                        "ninki": "004",
+                    }
+                ]
+            )
+        )
+        o3 = parser.parse_line(
+            build_o3_record(
+                pair_items=[
+                    {
+                        "kumi": "0307",
+                        "odds_low": "01230",
+                        "odds_high": "01560",
+                        "ninki": "005",
+                    }
+                ]
+            )
+        )
+        hr = parser.parse_line(
+            build_hr_record(
+                umaren_items=[
+                    {
+                        "kumi": "0307",
+                        "pay": "000001820",
+                        "ninki": "003",
+                    }
+                ],
+                wide_items=[
+                    {
+                        "kumi": "0307",
+                        "pay": "000001250",
+                        "ninki": "002",
+                    }
+                ]
+            )
+        )
         hc = parser.parse_line(build_hc_record())
         wc = parser.parse_line(build_wc_record())
 
@@ -370,6 +522,7 @@ class JVParserTests(unittest.TestCase):
         self.assertEqual(se["HaronTimeL4"], "478")
         self.assertEqual(se["HaronTimeL3"], "356")
         self.assertEqual(se["TimeDiff"], "0012")
+        self.assertEqual(se["KyakusituKubun"], "2")
         self.assertEqual(se["ZogenFugo"], "-")
         self.assertEqual(se["KakuteiJyuni"], "02")
         self.assertEqual(se["Odds"], "0250")
@@ -384,6 +537,22 @@ class JVParserTests(unittest.TestCase):
         self.assertEqual(o1["Umaban1"], "07")
         self.assertEqual(o1["Odds1"], "0140")
         self.assertEqual(o1["Ninki1"], "01")
+        self.assertEqual(o2["RecordSpec"], "O2")
+        self.assertEqual(o2["UmarenKumi1"], "0307")
+        self.assertEqual(o2["UmarenOdds1"], "012340")
+        self.assertEqual(o2["UmarenNinki1"], "004")
+        self.assertEqual(o3["RecordSpec"], "O3")
+        self.assertEqual(o3["WideKumi1"], "0307")
+        self.assertEqual(o3["WideOddsLow1"], "01230")
+        self.assertEqual(o3["WideOddsHigh1"], "01560")
+        self.assertEqual(o3["WideNinki1"], "005")
+        self.assertEqual(hr["RecordSpec"], "HR")
+        self.assertEqual(hr["PayUmarenKumi1"], "0307")
+        self.assertEqual(hr["PayUmarenAmount1"], "000001820")
+        self.assertEqual(hr["PayUmarenNinki1"], "003")
+        self.assertEqual(hr["PayWideKumi1"], "0307")
+        self.assertEqual(hr["PayWideAmount1"], "000001250")
+        self.assertEqual(hr["PayWideNinki1"], "002")
         self.assertEqual(hc["RecordSpec"], "HC")
         self.assertEqual(hc["ChokyoDate"], "20240105")
         self.assertEqual(hc["HaronTime4"], "524")
@@ -394,8 +563,194 @@ class JVParserTests(unittest.TestCase):
         self.assertEqual(wc["HaronTime5"], "653")
         self.assertEqual(wc["LapTime1"], "124")
 
+    def test_parser_can_limit_selected_fields_by_spec(self):
+        parser = JVParser(selected_fields_by_spec={"RA": ["Year", "RaceNum"], "WC": ["KettoNum", "HaronTime5"]})
+
+        ra = parser.parse_line(build_ra_record())
+        wc = parser.parse_line(build_wc_record(haron_time5="654"))
+
+        self.assertEqual(ra, {"RecordSpec": "RA", "Year": "2024", "RaceNum": "11"})
+        self.assertEqual(wc, {"RecordSpec": "WC", "KettoNum": "1234567890", "HaronTime5": "654"})
+
 
 class MakeDatasetTests(unittest.TestCase):
+    def test_make_dataset_retains_policy_only_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            output_dir = temp_root / "processed"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11", jyoken_name="3歳未勝利") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        futan="054",
+                        futan_before="056",
+                        blinker="1",
+                        kisyu_code="12345",
+                        kisyu_code_before="54321",
+                        minarai_cd="0",
+                        minarai_cd_before="1",
+                        kyakusitu_kubun="1",
+                        kakutei_jyuni="01",
+                    )
+                    + b"\n"
+                )
+
+            make_dataset(raw_dir=raw_dir, output_dir=output_dir)
+
+            train_data = pd.read_csv(output_dir / "train_data.csv")
+            self.assertEqual(train_data.loc[0, "JyokenName"], "3歳未勝利")
+            self.assertEqual(str(train_data.loc[0, "Blinker"]).strip(), "1")
+            self.assertEqual(str(train_data.loc[0, "KisyuCodeBefore"]).strip(), "54321")
+            self.assertEqual(str(train_data.loc[0, "MinaraiCDBefore"]).strip(), "1")
+            self.assertEqual(str(train_data.loc[0, "KyakusituKubun"]).strip(), "1")
+            self.assertEqual(float(train_data.loc[0, "FutanBefore"]), 56.0)
+
+    def test_build_wide_pair_label_frame_uses_latest_o3_snapshot_and_hr_payouts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_o3_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        happyo_time="02031000",
+                        pair_items=[
+                            {"kumi": "0307", "odds_low": "01000", "odds_high": "01200", "ninki": "005"},
+                            {"kumi": "0308", "odds_low": "01800", "odds_high": "02200", "ninki": "009"},
+                        ],
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_o3_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        happyo_time="02031100",
+                        pair_items=[
+                            {"kumi": "0307", "odds_low": "01230", "odds_high": "01560", "ninki": "004"},
+                            {"kumi": "0308", "odds_low": "01900", "odds_high": "02300", "ninki": "009"},
+                        ],
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_hr_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        wide_items=[
+                            {"kumi": "0307", "pay": "000001250", "ninki": "002"},
+                        ],
+                    )
+                    + b"\n"
+                )
+
+            wide_pairs = build_wide_pair_label_frame(raw_dir=raw_dir)
+            self.assertEqual(len(wide_pairs), 2)
+
+            winning_pair = wide_pairs.loc[(wide_pairs["Umaban1"] == 3) & (wide_pairs["Umaban2"] == 7)].iloc[0]
+            losing_pair = wide_pairs.loc[(wide_pairs["Umaban1"] == 3) & (wide_pairs["Umaban2"] == 8)].iloc[0]
+
+            self.assertEqual(winning_pair["RaceKey"], "2024020301010111")
+            self.assertEqual(str(winning_pair["RaceDate"])[:10], "2024-02-03")
+            self.assertAlmostEqual(float(winning_pair["WideOddsLowDecimal"]), 123.0)
+            self.assertAlmostEqual(float(winning_pair["WideOddsHighDecimal"]), 156.0)
+            self.assertAlmostEqual(float(winning_pair["WideOddsMeanDecimal"]), 139.5)
+            self.assertEqual(int(winning_pair["WideNinki"]), 4)
+            self.assertEqual(float(winning_pair["WidePayoff"]), 1250.0)
+            self.assertEqual(int(winning_pair["WideHit"]), 1)
+            self.assertEqual(float(winning_pair["WideNetReturn"]), 1150.0)
+            self.assertEqual(float(winning_pair["WideGrossReturn"]), 1250.0)
+
+            self.assertAlmostEqual(float(losing_pair["WideOddsLowDecimal"]), 190.0)
+            self.assertAlmostEqual(float(losing_pair["WideOddsHighDecimal"]), 230.0)
+            self.assertEqual(float(losing_pair["WidePayoff"]), 0.0)
+            self.assertEqual(int(losing_pair["WideHit"]), 0)
+            self.assertEqual(float(losing_pair["WideNetReturn"]), -100.0)
+            self.assertEqual(float(losing_pair["WideGrossReturn"]), 0.0)
+
+    def test_build_umaren_pair_label_frame_uses_latest_o2_snapshot_and_hr_payouts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_o2_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        happyo_time="02031000",
+                        pair_items=[
+                            {"kumi": "0307", "odds": "015600", "ninki": "010"},
+                            {"kumi": "0308", "odds": "021000", "ninki": "013"},
+                        ],
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_o2_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        happyo_time="02031100",
+                        pair_items=[
+                            {"kumi": "0307", "odds": "014200", "ninki": "008"},
+                            {"kumi": "0308", "odds": "022500", "ninki": "014"},
+                        ],
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_hr_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        umaren_items=[
+                            {"kumi": "0307", "pay": "000001820", "ninki": "003"},
+                        ],
+                    )
+                    + b"\n"
+                )
+
+            umaren_pairs = build_umaren_pair_label_frame(raw_dir=raw_dir)
+            self.assertEqual(len(umaren_pairs), 2)
+
+            winning_pair = umaren_pairs.loc[(umaren_pairs["Umaban1"] == 3) & (umaren_pairs["Umaban2"] == 7)].iloc[0]
+            losing_pair = umaren_pairs.loc[(umaren_pairs["Umaban1"] == 3) & (umaren_pairs["Umaban2"] == 8)].iloc[0]
+
+            self.assertEqual(winning_pair["RaceKey"], "2024020301010111")
+            self.assertEqual(str(winning_pair["RaceDate"])[:10], "2024-02-03")
+            self.assertAlmostEqual(float(winning_pair["UmarenOddsDecimal"]), 1420.0)
+            self.assertEqual(int(winning_pair["UmarenNinki"]), 8)
+            self.assertEqual(float(winning_pair["UmarenPayoff"]), 1820.0)
+            self.assertEqual(int(winning_pair["UmarenHit"]), 1)
+            self.assertEqual(float(winning_pair["UmarenNetReturn"]), 1720.0)
+            self.assertEqual(float(winning_pair["UmarenGrossReturn"]), 1820.0)
+
+            self.assertAlmostEqual(float(losing_pair["UmarenOddsDecimal"]), 2250.0)
+            self.assertEqual(float(losing_pair["UmarenPayoff"]), 0.0)
+            self.assertEqual(int(losing_pair["UmarenHit"]), 0)
+            self.assertEqual(float(losing_pair["UmarenNetReturn"]), -100.0)
+            self.assertEqual(float(losing_pair["UmarenGrossReturn"]), 0.0)
+
     def test_make_dataset_outputs_expected_columns_and_signed_weight_delta(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -976,6 +1331,55 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(float(prediction_data.loc[0, "HorseWinRateBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "JockeyStartsBefore"]), 1.0)
             self.assertEqual(float(prediction_data.loc[0, "TrainerStartsBefore"]), 1.0)
+
+    def test_make_prediction_dataset_treats_zero_finish_as_pending(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            output_dir = temp_root / "processed"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0106", race_num="05") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0106",
+                        race_num="05",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        kakutei_jyuni="01",
+                    )
+                    + b"\n"
+                )
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        ketto_num="1111111111",
+                        kisyu_code="12345",
+                        chokyosi_code="54321",
+                        banusi_code="111111",
+                        kakutei_jyuni="00",
+                    )
+                    + b"\n"
+                )
+
+            make_prediction_dataset(
+                raw_dir=raw_dir,
+                output_dir=output_dir,
+                output_filename="prediction_data.csv",
+                prediction_date="2024-02-03",
+            )
+
+            prediction_data = pd.read_csv(output_dir / "prediction_data.csv")
+            self.assertEqual(len(prediction_data), 1)
+            self.assertEqual(str(prediction_data.loc[0, "RaceDate"])[:10], "2024-02-03")
 
     def test_make_prediction_dataset_can_fill_market_columns_from_o1(self):
         with tempfile.TemporaryDirectory() as temp_dir:

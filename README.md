@@ -256,6 +256,17 @@ To predict, you need a CSV file with the same features as the training data. If 
   --model data/processed/lgbm_targetwin_temporal_norawid.txt
 ```
 
+For race-day prediction with netkeiba body weights, run:
+```bash
+./.venv/bin/python scripts/predict_today_netkeiba_weights.py \
+  --prediction-date 2026-05-02 \
+  --race-key 2026050205010101 \
+  --package-dir data/packages/weekend_20260501 \
+  --use-cache \
+  --notify-discord
+```
+Race-day prediction reads the Friday `prediction_base_weekend.csv`; it does not rebuild features from `data/raw`. Use `--race-day-csv` to join additional same-day fields by `RaceKey` or `RaceKey + Umaban`. By default, the script reads `DISCORD_WEBHOOK_URL` from `.env` in the project root. Use `--discord-webhook-url` to override it for one command, or `--dry-run-discord` to print the Discord messages without sending them. If `--notify-discord` is set but no webhook URL is available, local CSV and monitor outputs are still written and the Discord step is skipped.
+
 ## Tests
 ```bash
 ./.venv/bin/python -m unittest discover -s tests -v

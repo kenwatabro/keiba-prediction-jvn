@@ -24,6 +24,14 @@ MARKET_FEATURE_COLS = {
     "OddsDecimal",
     "Ninki",
 }
+POLICY_ONLY_COLS = {
+    "JyokenName",
+    "FutanBefore",
+    "Blinker",
+    "KisyuCodeBefore",
+    "MinaraiCDBefore",
+    "KyakusituKubun",
+}
 RAW_ID_FEATURE_COLS = {
     "BanusiCode",
     "ChokyosiCode",
@@ -160,6 +168,7 @@ def select_feature_columns(
     features = [col for col in df.columns if col not in NON_FEATURE_COLS and col != target_col]
     if not include_market_features:
         features = [col for col in features if col not in MARKET_FEATURE_COLS]
+    features = [col for col in features if col not in POLICY_ONLY_COLS]
     if drop_raw_ids:
         features = [col for col in features if col not in RAW_ID_FEATURE_COLS]
     if exclude_prefixes:

@@ -142,11 +142,22 @@ On the mini PC:
 1. Receive and unpack the Friday package.
 2. Collect race-day data.
 3. Save raw race-day data with the collection timestamp.
-4. Join race-day data into `prediction_base_weekend.csv`.
+4. Join race-day data into the fixed rows from `prediction_base_weekend.csv`.
 5. Align the final inference frame to `features.json`.
 6. Run inference with `model.txt`.
 7. Save predictions with the data-as-of timestamp.
 8. Notify Discord or another configured output destination.
+
+The race-day command must use the Friday package as input. It should not rebuild the prediction base from `data/raw`.
+
+```bash
+venv/bin/python scripts/predict_today_netkeiba_weights.py \
+  --prediction-date 2026-05-02 \
+  --race-key 2026050205010101 \
+  --package-dir /home/USER/keiba/runs/weekend_20260501 \
+  --race-day-csv /home/USER/keiba/runs/20260502/race_day_2026050205010101.csv \
+  --notify-discord
+```
 
 Race-day data examples:
 

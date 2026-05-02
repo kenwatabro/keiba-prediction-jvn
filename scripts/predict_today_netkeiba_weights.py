@@ -1,11 +1,13 @@
 import argparse
 import html
 import json
+import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import lightgbm as lgb
@@ -18,7 +20,6 @@ PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
 sys.path.insert(0, str(MODEL_DIR))
 sys.path.insert(0, str(PREPROCESSING_DIR))
 
-from make_dataset import build_feature_frame  # noqa: E402
 from predictor import load_feature_columns  # noqa: E402
 from trainer import cast_categoricals  # noqa: E402
 
@@ -35,6 +36,22 @@ JYO_CODE_TO_NAME = {
     "09": "阪神",
     "10": "小倉",
 }
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key:
+            values[key] = value
+    return values
 
 
 def racekey_to_netkeiba_id(race_key: str) -> str:
@@ -118,18 +135,111 @@ def collect_netkeiba_weights(race_keys: list[str], cache_dir: Path, use_cache: b
     return pd.DataFrame(all_rows)
 
 
-def build_prediction_frame(prediction_date: str, include_hc: bool, include_wc: bool) -> pd.DataFrame:
-    df, _feature_cols = build_feature_frame(raw_dir=PROJECT_ROOT / "data" / "raw", include_hc=include_hc, include_wc=include_wc)
+def resolve_package_path(package_dir: str | None, filename: str) -> Path | None:
+    if not package_dir:
+        return None
+    return Path(package_dir) / filename
+
+
+def resolve_model_path(args: argparse.Namespace) -> Path:
+    model_path = Path(args.model) if args.model else resolve_package_path(args.package_dir, "model.txt")
+    if model_path is None:
+        raise ValueError("Specify --model or --package-dir.")
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {model_path}")
+    return model_path
+
+
+def resolve_prediction_base_path(args: argparse.Namespace) -> Path | None:
+    if args.prediction_base:
+        return Path(args.prediction_base)
+    return resolve_package_path(args.package_dir, "prediction_base_weekend.csv")
+
+
+def load_prediction_base(prediction_base_path: Path, prediction_date: str, race_key: str | None) -> pd.DataFrame:
+    if not prediction_base_path.exists():
+        raise FileNotFoundError(f"Prediction base not found: {prediction_base_path}")
+    df = pd.read_csv(prediction_base_path, dtype={"RaceKey": "string"}, low_memory=False)
+    if "RaceDate" not in df.columns:
+        raise ValueError(f"{prediction_base_path} must contain RaceDate.")
+    if "RaceKey" not in df.columns:
+        raise ValueError(f"{prediction_base_path} must contain RaceKey.")
+    if "Umaban" not in df.columns:
+        raise ValueError(f"{prediction_base_path} must contain Umaban.")
+    df["RaceKey"] = df["RaceKey"].astype(str)
+    df["Umaban"] = pd.to_numeric(df["Umaban"], errors="coerce")
+
     target_date = pd.Timestamp(prediction_date)
-    pred = df.loc[(~df["HasResult"]) & (df["RaceDate"] == target_date)].copy()
+    race_dates = pd.to_datetime(df["RaceDate"], errors="coerce")
+    pred = df.loc[race_dates.eq(target_date)].copy()
+    if race_key:
+        pred = pred.loc[pred["RaceKey"].astype(str).eq(str(race_key))].copy()
     pred = pred.loc[pd.to_numeric(pred["Umaban"], errors="coerce").fillna(0).gt(0)].copy()
     if pred.empty:
-        raise ValueError(f"No prediction rows for {prediction_date}")
+        target = f"{prediction_date} race_key={race_key}" if race_key else prediction_date
+        raise ValueError(f"No prediction rows for {target} in {prediction_base_path}")
     pred = pred.drop(columns=["HasResult", "KakuteiJyuni", "TargetTop3", "TargetWin"], errors="ignore")
     return pred.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
 
 
+def jst_now_iso() -> str:
+    return datetime.now(timezone(timedelta(hours=9))).replace(microsecond=0).isoformat()
+
+
+def apply_race_day_csv(frame: pd.DataFrame, race_day_csv: Path | None) -> pd.DataFrame:
+    if race_day_csv is None:
+        return frame
+    if not race_day_csv.exists():
+        raise FileNotFoundError(f"Race-day CSV not found: {race_day_csv}")
+    updates = pd.read_csv(race_day_csv, dtype={"RaceKey": "string"}, low_memory=False)
+    if "RaceKey" not in updates.columns:
+        raise ValueError(f"{race_day_csv} must contain RaceKey.")
+    keys = ["RaceKey", "Umaban"] if "Umaban" in updates.columns else ["RaceKey"]
+    update_columns = [column for column in updates.columns if column not in keys]
+    if not update_columns:
+        return frame
+
+    result = frame.copy()
+    result["RaceKey"] = result["RaceKey"].astype(str)
+    updates["RaceKey"] = updates["RaceKey"].astype(str)
+    if "Umaban" in keys:
+        result["Umaban"] = pd.to_numeric(result["Umaban"], errors="coerce")
+        updates["Umaban"] = pd.to_numeric(updates["Umaban"], errors="coerce")
+    merged = result.merge(updates[keys + update_columns], on=keys, how="left", suffixes=("", "__race_day"))
+    for column in update_columns:
+        update_column = f"{column}__race_day" if column in result.columns else column
+        if update_column not in merged.columns:
+            continue
+        if column in result.columns:
+            available = merged[update_column].notna()
+            merged.loc[available, column] = merged.loc[available, update_column]
+            merged = merged.drop(columns=[update_column])
+        else:
+            merged = merged.rename(columns={update_column: column})
+    return merged
+
+
+def build_prediction_frame(
+    prediction_date: str,
+    prediction_base_path: Path | None,
+    race_key: str | None,
+    race_day_csv: Path | None,
+) -> pd.DataFrame:
+    if prediction_base_path is None:
+        raise ValueError("Race-day prediction requires --prediction-base or --package-dir; do not rebuild from data/raw.")
+    return apply_race_day_csv(load_prediction_base(prediction_base_path, prediction_date, race_key), race_day_csv)
+
+
 def merge_weights(prediction_df: pd.DataFrame, weights_df: pd.DataFrame) -> pd.DataFrame:
+    scrape_columns = [
+        "NetkeibaRaceId",
+        "NetkeibaBamei",
+        "NetkeibaJockey",
+        "NetkeibaBaTaijyu",
+        "NetkeibaZogenSa",
+        "NetkeibaWeightAvailable",
+    ]
+    prediction_df = prediction_df.drop(columns=scrape_columns, errors="ignore")
     merged = prediction_df.merge(
         weights_df,
         on=["RaceKey", "Umaban"],
@@ -156,7 +266,14 @@ def add_labels(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def monitor_frame(frame: pd.DataFrame, feature_columns: list[str], weights_df: pd.DataFrame) -> dict[str, object]:
+def monitor_frame(
+    frame: pd.DataFrame,
+    feature_columns: list[str],
+    weights_df: pd.DataFrame,
+    data_as_of: str,
+    prediction_base_path: Path | None,
+    race_day_csv: Path | None,
+) -> dict[str, object]:
     feature_na = frame[feature_columns].isna().sum().sort_values(ascending=False)
     top_missing = {column: int(value) for column, value in feature_na.head(30).items() if int(value) > 0}
     by_race = (
@@ -170,6 +287,9 @@ def monitor_frame(frame: pd.DataFrame, feature_columns: list[str], weights_df: p
     )
     return {
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "data_as_of": data_as_of,
+        "prediction_base_path": str(prediction_base_path) if prediction_base_path else None,
+        "race_day_csv": str(race_day_csv) if race_day_csv else None,
         "rows": int(len(frame)),
         "races": int(frame["RaceKey"].nunique()),
         "feature_count": len(feature_columns),
@@ -182,6 +302,102 @@ def monitor_frame(frame: pd.DataFrame, feature_columns: list[str], weights_df: p
         "top_missing_feature_counts": top_missing,
         "race_weight_coverage": by_race.to_dict(orient="records"),
     }
+
+
+def split_discord_messages(content: str, limit: int = 1900) -> list[str]:
+    if len(content) <= limit:
+        return [content]
+    messages: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in content.splitlines():
+        line_len = len(line) + 1
+        if current and current_len + line_len > limit:
+            messages.append("\n".join(current))
+            current = []
+            current_len = 0
+        if line_len > limit:
+            if current:
+                messages.append("\n".join(current))
+                current = []
+                current_len = 0
+            for start in range(0, len(line), limit):
+                messages.append(line[start : start + limit])
+            continue
+        current.append(line)
+        current_len += line_len
+    if current:
+        messages.append("\n".join(current))
+    return messages
+
+
+def format_discord_messages(
+    predictions: pd.DataFrame,
+    monitor: dict[str, object],
+    prediction_date: str,
+    model_path: Path,
+    top_n: int = 3,
+    races_per_message: int = 6,
+) -> list[str]:
+    top_n = max(1, top_n)
+    races_per_message = max(1, races_per_message)
+    missing = monitor.get("top_missing_feature_counts", {})
+    missing_text = ", ".join(f"{key}={value}" for key, value in missing.items()) if missing else "none"
+    header = [
+        f"Prediction complete: {prediction_date}",
+        f"Model: {model_path.name}",
+        f"Rows/Races: {monitor.get('rows')}/{monitor.get('races')}",
+        f"Body weight: {monitor.get('rows_with_weight')}/{monitor.get('rows')} rows, "
+        f"{monitor.get('races_with_any_weight')}/{monitor.get('races')} races",
+        f"Missing features: {missing_text}",
+    ]
+
+    race_blocks: list[str] = []
+    top = predictions.loc[predictions["PredictionRankInRace"] <= top_n].copy()
+    for race_key, race_df in top.groupby("RaceKey", sort=False):
+        race_label = str(race_df["RaceLabel"].iloc[0]) if "RaceLabel" in race_df.columns else str(race_key)
+        hasso = str(race_df["HassoTime"].iloc[0]) if "HassoTime" in race_df.columns else ""
+        lines = [f"{race_label} {hasso}".strip()]
+        for _, row in race_df.sort_values("PredictionRankInRace").iterrows():
+            weight_available = row.get("NetkeibaWeightAvailable", 0)
+            weight_mark = "W" if not pd.isna(weight_available) and int(weight_available) == 1 else "-"
+            lines.append(
+                f"{int(row['PredictionRankInRace'])}. {int(row['Umaban'])} "
+                f"{row.get('Bamei', '')} {float(row['Prediction']):.4f} [{weight_mark}]"
+            )
+        race_blocks.append("\n".join(lines))
+
+    messages = ["\n".join(header)]
+    for start in range(0, len(race_blocks), races_per_message):
+        messages.append("\n\n".join(race_blocks[start : start + races_per_message]))
+    result: list[str] = []
+    for message in messages:
+        result.extend(split_discord_messages(message))
+    return result
+
+
+def post_discord_message(webhook_url: str, content: str) -> None:
+    payload = json.dumps({"content": content}, ensure_ascii=False).encode("utf-8")
+    req = Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "jra-van-predictor"},
+        method="POST",
+    )
+    with urlopen(req, timeout=20) as response:
+        response.read()
+
+
+def notify_discord(webhook_url: str, messages: list[str], dry_run: bool = False) -> None:
+    for index, message in enumerate(messages, start=1):
+        if dry_run:
+            print(f"[discord dry-run {index}/{len(messages)}]\n{message}\n")
+            continue
+        try:
+            post_discord_message(webhook_url, message)
+        except (HTTPError, URLError, TimeoutError) as exc:
+            print(f"Discord notification failed for message {index}/{len(messages)}: {exc}")
+            return
 
 
 def build_model_feature_frame(frame: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:
@@ -200,11 +416,17 @@ def build_model_feature_frame(frame: pd.DataFrame, feature_columns: list[str]) -
 def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    model_path = Path(args.model)
+    model_path = resolve_model_path(args)
     booster = lgb.Booster(model_file=str(model_path))
     feature_columns = load_feature_columns(model_path) or list(booster.feature_name())
 
-    prediction_df = build_prediction_frame(args.prediction_date, include_hc=args.include_hc, include_wc=args.include_wc)
+    prediction_base_path = resolve_prediction_base_path(args)
+    prediction_df = build_prediction_frame(
+        args.prediction_date,
+        prediction_base_path=prediction_base_path,
+        race_key=args.race_key,
+        race_day_csv=Path(args.race_day_csv) if args.race_day_csv else None,
+    )
     race_keys = sorted(prediction_df["RaceKey"].astype(str).unique().tolist())
     weights_df = collect_netkeiba_weights(
         race_keys,
@@ -212,7 +434,10 @@ def run(args: argparse.Namespace) -> None:
         use_cache=args.use_cache,
         sleep_seconds=args.sleep_seconds,
     )
-    weights_path = output_dir / f"netkeiba_weights_{args.prediction_date.replace('-', '')}.csv"
+    output_suffix = args.prediction_date.replace("-", "")
+    if args.race_key:
+        output_suffix = f"{output_suffix}_{args.race_key}"
+    weights_path = output_dir / f"netkeiba_weights_{output_suffix}.csv"
     weights_df.to_csv(weights_path, index=False)
 
     merged = add_labels(merge_weights(prediction_df, weights_df))
@@ -220,7 +445,15 @@ def run(args: argparse.Namespace) -> None:
     if missing_columns:
         raise ValueError(f"Missing model feature columns: {missing_columns}")
 
-    monitor = monitor_frame(merged, feature_columns, weights_df)
+    data_as_of = args.data_as_of or jst_now_iso()
+    monitor = monitor_frame(
+        merged,
+        feature_columns,
+        weights_df,
+        data_as_of=data_as_of,
+        prediction_base_path=prediction_base_path,
+        race_day_csv=Path(args.race_day_csv) if args.race_day_csv else None,
+    )
     feature_frame = build_model_feature_frame(merged, feature_columns)
     merged["Prediction"] = booster.predict(feature_frame)
     merged["PredictionRankInRace"] = (
@@ -248,12 +481,28 @@ def run(args: argparse.Namespace) -> None:
     output_columns = [column for column in output_columns if column in merged.columns]
     predictions = merged.sort_values(["RaceKey", "Prediction"], ascending=[True, False])[output_columns].copy()
 
-    input_path = output_dir / f"prediction_input_{args.prediction_date.replace('-', '')}.csv"
-    prediction_path = output_dir / f"predictions_{args.prediction_date.replace('-', '')}.csv"
-    monitor_path = output_dir / f"prediction_monitor_{args.prediction_date.replace('-', '')}.json"
+    input_path = output_dir / f"prediction_input_{output_suffix}.csv"
+    prediction_path = output_dir / f"predictions_{output_suffix}.csv"
+    monitor_path = output_dir / f"prediction_monitor_{output_suffix}.json"
     merged.to_csv(input_path, index=False)
     predictions.to_csv(prediction_path, index=False)
     monitor_path.write_text(json.dumps(monitor, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    env_values = load_env_file(Path(args.env_file))
+    webhook_url = args.discord_webhook_url or os.environ.get("DISCORD_WEBHOOK_URL") or env_values.get("DISCORD_WEBHOOK_URL")
+    if args.notify_discord or args.dry_run_discord:
+        messages = format_discord_messages(
+            predictions,
+            monitor,
+            prediction_date=args.prediction_date,
+            model_path=model_path,
+            top_n=args.discord_top_n,
+            races_per_message=args.discord_races_per_message,
+        )
+        if webhook_url or args.dry_run_discord:
+            notify_discord(webhook_url or "", messages, dry_run=args.dry_run_discord)
+        else:
+            print("Discord notification skipped: webhook URL is not set.")
 
     print(f"weights: {weights_path}")
     print(f"prediction input: {input_path}")
@@ -265,13 +514,22 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch netkeiba body weights and predict a race day with a local model.")
     parser.add_argument("--prediction-date", required=True, help="Race date as YYYY-MM-DD.")
-    parser.add_argument("--model", required=True, help="LightGBM model path.")
+    parser.add_argument("--race-key", default=None, help="Predict only one RaceKey from the Friday prediction base.")
+    parser.add_argument("--package-dir", default=None, help="Unpacked Friday package directory containing model.txt and prediction_base_weekend.csv.")
+    parser.add_argument("--prediction-base", default=None, help="Friday prediction_base_weekend.csv. Defaults to --package-dir/prediction_base_weekend.csv.")
+    parser.add_argument("--race-day-csv", default=None, help="Optional RaceKey or RaceKey+Umaban CSV for race-day fields such as weather, baba, or odds.")
+    parser.add_argument("--data-as-of", default=None, help="Timestamp for the race-day data. Defaults to current JST time.")
+    parser.add_argument("--model", default=None, help="LightGBM model path. Defaults to --package-dir/model.txt.")
     parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "data" / "processed" / "current"))
     parser.add_argument("--cache-dir", default=str(PROJECT_ROOT / "data" / "archive" / "netkeiba_cache"))
     parser.add_argument("--use-cache", action="store_true", help="Use cached netkeiba HTML when present.")
     parser.add_argument("--sleep-seconds", type=float, default=0.2)
-    parser.add_argument("--include-hc", action="store_true")
-    parser.add_argument("--include-wc", action="store_true")
+    parser.add_argument("--notify-discord", action="store_true", help="Send prediction summary to Discord.")
+    parser.add_argument("--discord-webhook-url", default=None, help="Discord webhook URL. Defaults to DISCORD_WEBHOOK_URL.")
+    parser.add_argument("--discord-top-n", type=int, default=3, help="Number of runners per race to include.")
+    parser.add_argument("--discord-races-per-message", type=int, default=6, help="Race blocks per Discord message.")
+    parser.add_argument("--dry-run-discord", action="store_true", help="Print Discord messages without sending.")
+    parser.add_argument("--env-file", default=str(PROJECT_ROOT / ".env"), help="Optional dotenv file for local secrets.")
     return parser.parse_args()
 
 
