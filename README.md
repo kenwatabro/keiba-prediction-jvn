@@ -3,6 +3,7 @@
 This system uses JRA-VAN Data Lab to fetch horse racing data and Machine Learning (LightGBM) to predict race outcomes.
 
 ## Development Memo
+- Execution plan: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - Project docs index: [docs/project-documents.md](docs/project-documents.md)
 - System overview: [docs/system-overview.md](docs/system-overview.md)
 - Requirements: [docs/requirements-definition.md](docs/requirements-definition.md)
@@ -14,6 +15,7 @@ This system uses JRA-VAN Data Lab to fetch horse racing data and Machine Learnin
 - Glossary: [docs/glossary.md](docs/glossary.md)
 - Future data model: [docs/future-data-model.md](docs/future-data-model.md)
 - JV-Link expansion roadmap: [docs/jvlink-expansion-roadmap.md](docs/jvlink-expansion-roadmap.md)
+- Weekend operations flow: [docs/weekend-operations-flow.md](docs/weekend-operations-flow.md)
 - Environment notes: [docs/development-environment.md](docs/development-environment.md)
 - Windows fetch notes: [docs/windows-fetch-setup.md](docs/windows-fetch-setup.md)
 
@@ -183,6 +185,16 @@ To go one step further and learn when to bet, run the race-pick meta strategy ex
 ```
 This is explicitly return-oriented and can choose sparse policies with far fewer bets than the all-races benchmark.
 
+The pick-strategy layer also supports restricting policy search to specific workflow pools. This is useful when a broader search overfits to `standout_only` and you want to keep the search inside prefilter-passing races:
+```bash
+./.venv/bin/python src/model/pick_strategy_temporal.py \
+  --drop-raw-ids \
+  --policy-name prefilter_pass \
+  --policy-name prefilter_pass_contested \
+  --output data/processed/experiments/pick_strategy_temporal_prefilter_only_summary.json
+```
+On the current checked dataset, this restricted search is the preferred workflow variant because it holds test return above break-even while remaining sparse.
+
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
 ./.venv/bin/python src/model/temporal_evaluate.py \
@@ -209,7 +221,23 @@ For live market-aware prediction, fetch `O1` for the target race and build a pen
 ```
 When an `O1_*.txt` snapshot is present, pending rows with missing market columns are filled from the latest `O1` snapshot for each `RaceKey + Umaban`. That makes the resulting CSV compatible with a model trained using `--include-market-features`.
 
-### 3c. Stage-2 Reranker Comparison (Run on WSL)
+### 3c. Friday Weekend Package (Run on WSL)
+For race-day operation on the mini PC, build one transfer package on Friday:
+```bash
+./.venv/bin/python scripts/build_weekend_package.py \
+  --package-date 20260501 \
+  --build-train-data \
+  --drop-raw-ids \
+  --include-hc \
+  --include-wc \
+  --prediction-date 2026-05-02 \
+  --prediction-date 2026-05-03
+```
+This writes `data/packages/weekend_YYYYMMDD/` and `data/packages/weekend_package_YYYYMMDD.tar.gz`.
+The package contains `model.txt`, `features.json`, `prediction_base_weekend.csv`, `racekeys_weekend.txt`, and `manifest.json`.
+Race-day Ubuntu should unpack this package, collect race-day data, fill the fixed feature schema, and run inference without retraining.
+
+### 3d. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:
 ```bash
 ./.venv/bin/python src/model/rerank_temporal.py \

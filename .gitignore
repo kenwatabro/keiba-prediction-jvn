@@ -1,14 +1,19 @@
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 
 data/raw/
 data/processed/
+data/archive/
+data/packages/
 
 *.ipynb
 .ipynb_checkpoints/
 
-docs/
+docs/*
+!docs/project-documents.md
+!docs/weekend-operations-flow.md
 doc/
 
 References/
