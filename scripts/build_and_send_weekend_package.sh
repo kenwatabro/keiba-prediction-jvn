@@ -19,7 +19,9 @@ INCLUDE_WH=0
 INCLUDE_O1=0
 INCLUDE_MARKET_FEATURES=0
 PREDICTION_BASE_SOURCE=""
+PREDICTION_BASE_CACHE=""
 REBUILD_PREDICTION_BASE=0
+RETRAIN_MODEL=0
 PREDICTION_DATES=()
 DRY_RUN=0
 
@@ -52,7 +54,9 @@ Options:
   --train-data PATH
   --package-root PATH
   --prediction-base-source PATH      Reuse an existing prediction_base_weekend.csv.
+  --prediction-base-cache PATH       Reusable unfiltered prediction base cache.
   --rebuild-prediction-base          Rebuild prediction_base_weekend.csv from raw files.
+  --retrain-model                    Retrain even if package model artifacts exist.
   --build-train-data                 Rebuild train_data from raw files before training.
   --keep-raw-ids
   --include-o1
@@ -116,8 +120,16 @@ while [[ $# -gt 0 ]]; do
       PREDICTION_BASE_SOURCE="$2"
       shift 2
       ;;
+    --prediction-base-cache)
+      PREDICTION_BASE_CACHE="$2"
+      shift 2
+      ;;
     --rebuild-prediction-base)
       REBUILD_PREDICTION_BASE=1
+      shift
+      ;;
+    --retrain-model)
+      RETRAIN_MODEL=1
       shift
       ;;
     --build-train-data)
@@ -196,18 +208,36 @@ BUILD_ARGS=(
 
 TARBALL="${PACKAGE_ROOT}/weekend_package_${PACKAGE_DATE}.tar.gz"
 PACKAGE_DIR="${PACKAGE_ROOT}/weekend_${PACKAGE_DATE}"
-DEFAULT_PREDICTION_BASE_SOURCE="${PACKAGE_DIR}/prediction_base_weekend.csv"
+MODEL_SOURCE="${PACKAGE_DIR}/model.txt"
+FEATURES_SOURCE="${PACKAGE_DIR}/model.features.json"
+DEFAULT_PREDICTION_BASE_CACHE="${PACKAGE_ROOT}/prediction_base_weekend_${PACKAGE_DATE}_full.csv"
 
-if [[ -z "${PREDICTION_BASE_SOURCE}" && "${REBUILD_PREDICTION_BASE}" != "1" && -f "${DEFAULT_PREDICTION_BASE_SOURCE}" ]]; then
-  PREDICTION_BASE_SOURCE="${DEFAULT_PREDICTION_BASE_SOURCE}"
+if [[ -z "${PREDICTION_BASE_CACHE}" ]]; then
+  PREDICTION_BASE_CACHE="${DEFAULT_PREDICTION_BASE_CACHE}"
+fi
+
+if [[ "${RETRAIN_MODEL}" != "1" && -f "${MODEL_SOURCE}" && -f "${FEATURES_SOURCE}" ]]; then
+  BUILD_ARGS+=(--model-source "${MODEL_SOURCE}" --features-source "${FEATURES_SOURCE}")
+  echo "Reusing model artifacts: ${MODEL_SOURCE}"
 fi
 
 if [[ -n "${PREDICTION_BASE_SOURCE}" ]]; then
   BUILD_ARGS+=(--prediction-base-source "${PREDICTION_BASE_SOURCE}")
   echo "Reusing prediction base: ${PREDICTION_BASE_SOURCE}"
-elif [[ "${REBUILD_PREDICTION_BASE}" != "1" ]]; then
-  echo "No reusable prediction base found at ${DEFAULT_PREDICTION_BASE_SOURCE}."
-  echo "build_weekend_package.py will build it from raw files this time."
+else
+  BUILD_ARGS+=(--prediction-base-cache "${PREDICTION_BASE_CACHE}")
+  if [[ "${REBUILD_PREDICTION_BASE}" == "1" ]]; then
+    if [[ "${DRY_RUN}" == "1" ]]; then
+      echo "Would rebuild prediction base cache: ${PREDICTION_BASE_CACHE}"
+    else
+      rm -f "${PREDICTION_BASE_CACHE}"
+    fi
+  elif [[ -f "${PREDICTION_BASE_CACHE}" ]]; then
+    echo "Reusing prediction base cache: ${PREDICTION_BASE_CACHE}"
+  else
+    echo "No reusable prediction base cache found at ${PREDICTION_BASE_CACHE}."
+    echo "build_weekend_package.py will build it from raw files this time."
+  fi
 fi
 
 if [[ "${BUILD_TRAIN_DATA}" == "1" ]]; then

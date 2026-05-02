@@ -150,10 +150,11 @@ def build_or_copy_model(args: argparse.Namespace, package_dir: Path) -> tuple[Pa
     return model_path, package_features_path
 
 
-def filter_prediction_dates(prediction_path: Path, prediction_dates: list[str]) -> None:
+def filter_prediction_dates(source_path: Path, prediction_dates: list[str], output_path: Path | None = None) -> None:
     if not prediction_dates:
         return
-    df = pd.read_csv(prediction_path, low_memory=False)
+    output = output_path or source_path
+    df = pd.read_csv(source_path, low_memory=False)
     if "RaceDate" not in df.columns:
         raise ValueError("prediction_base_weekend.csv must contain RaceDate when --prediction-date is used.")
     dates = {pd.Timestamp(value).strftime("%Y-%m-%d") for value in prediction_dates}
@@ -165,7 +166,7 @@ def filter_prediction_dates(prediction_path: Path, prediction_dates: list[str]) 
     missing_dates = sorted(dates - matched_dates)
     if missing_dates:
         raise ValueError(f"prediction_base_weekend.csv is missing requested dates: {missing_dates}")
-    filtered.to_csv(prediction_path, index=False)
+    filtered.to_csv(output, index=False)
 
 
 def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -> Path:
@@ -174,23 +175,36 @@ def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -
         source = Path(args.prediction_base_source)
         if not source.exists():
             raise FileNotFoundError(f"Prediction base source not found: {source}")
-        if source.resolve() != prediction_path.resolve():
-            shutil.copy2(source, prediction_path)
+        if source.resolve() == prediction_path.resolve():
+            raise ValueError(
+                "--prediction-base-source must not point to the package output prediction_base_weekend.csv; "
+                "use --prediction-base-cache for reusable unfiltered data."
+            )
+        shutil.copy2(source, prediction_path)
         filter_prediction_dates(prediction_path, args.prediction_date)
         return prediction_path
 
+    prediction_base_cache = Path(args.prediction_base_cache) if args.prediction_base_cache else None
+    if prediction_base_cache and prediction_base_cache.exists():
+        shutil.copy2(prediction_base_cache, prediction_path)
+        filter_prediction_dates(prediction_path, args.prediction_date)
+        return prediction_path
+
+    build_output_path = prediction_base_cache or prediction_path
     make_prediction_dataset(
         raw_dir=args.raw_dir,
-        output_dir=package_dir,
-        output_filename=prediction_path.name,
+        output_dir=build_output_path.parent,
+        output_filename=build_output_path.name,
         prediction_date=None,
         include_o1=args.include_o1,
         include_wh=args.include_wh,
         include_hc=args.include_hc,
         include_wc=args.include_wc,
     )
-    if not prediction_path.exists():
-        raise FileNotFoundError(f"Prediction base was not created: {prediction_path}")
+    if not build_output_path.exists():
+        raise FileNotFoundError(f"Prediction base was not created: {build_output_path}")
+    if build_output_path.resolve() != prediction_path.resolve():
+        shutil.copy2(build_output_path, prediction_path)
     filter_prediction_dates(prediction_path, args.prediction_date)
     return prediction_path
 
@@ -272,8 +286,8 @@ def build_weekend_package(args: argparse.Namespace) -> tuple[Path, Path]:
     package_dir = package_root / f"weekend_{args.package_date}"
     package_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path, features_path = build_or_copy_model(args, package_dir)
     prediction_path = build_or_copy_prediction_base(args, package_dir)
+    model_path, features_path = build_or_copy_model(args, package_dir)
     validation_summary = validate_prediction_base(prediction_path, features_path)
     racekeys_path = package_dir / "racekeys_weekend.txt"
     racekeys = write_racekeys(prediction_path, racekeys_path)
@@ -304,6 +318,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-data", default=str(DEFAULT_TRAIN_DATA), help="Training CSV path.")
     parser.add_argument("--build-train-data", action="store_true", help="Rebuild --train-data from raw files before training.")
     parser.add_argument("--prediction-base-source", default=None, help="Existing prediction base CSV to copy instead of building from raw files.")
+    parser.add_argument("--prediction-base-cache", default=None, help="Reusable unfiltered prediction base CSV. Built from raw files if missing.")
     parser.add_argument("--model-source", default=None, help="Existing LightGBM model to copy instead of training.")
     parser.add_argument("--features-source", default=None, help="Existing features JSON to copy with --model-source.")
     parser.add_argument("--prediction-date", action="append", default=[], help="Restrict weekend prediction rows to a race date. Repeat for Sat/Sun.")

@@ -1,5 +1,6 @@
 import argparse
 import json
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -81,6 +82,7 @@ def build_args(temp_root: Path) -> argparse.Namespace:
         train_data=str(train_data),
         build_train_data=False,
         prediction_base_source=str(prediction_source),
+        prediction_base_cache=None,
         model_source=str(model_source),
         features_source=str(features_source),
         prediction_date=[],
@@ -144,13 +146,16 @@ class WeekendPackageTests(unittest.TestCase):
             racekeys = (package_dir / "racekeys_weekend.txt").read_text(encoding="utf-8").splitlines()
             self.assertEqual(racekeys, ["2026050308010101"])
 
-    def test_prediction_base_source_can_be_same_as_package_target(self):
+    def test_prediction_base_cache_can_rebuild_existing_package_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             args = build_args(temp_root)
             package_dir, _ = build_weekend_package(args)
 
-            args.prediction_base_source = str(package_dir / "prediction_base_weekend.csv")
+            cache_path = temp_root / "prediction_base_cache.csv"
+            shutil.copy2(package_dir / "prediction_base_weekend.csv", cache_path)
+            args.prediction_base_source = None
+            args.prediction_base_cache = str(cache_path)
             args.prediction_date = ["2026-05-02", "2026-05-03"]
 
             rebuilt_package_dir, _ = build_weekend_package(args)
@@ -161,6 +166,17 @@ class WeekendPackageTests(unittest.TestCase):
                 sorted(pd.to_datetime(prediction_df["RaceDate"]).dt.strftime("%Y-%m-%d").unique().tolist()),
                 ["2026-05-02", "2026-05-03"],
             )
+
+    def test_prediction_base_source_rejects_package_target_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            args = build_args(temp_root)
+            package_dir, _ = build_weekend_package(args)
+
+            args.prediction_base_source = str(package_dir / "prediction_base_weekend.csv")
+
+            with self.assertRaisesRegex(ValueError, "prediction-base-cache"):
+                build_weekend_package(args)
 
     def test_validate_prediction_base_rejects_missing_feature_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:
