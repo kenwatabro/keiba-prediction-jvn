@@ -16,6 +16,7 @@ This system uses JRA-VAN Data Lab to fetch horse racing data and Machine Learnin
 - Future data model: [docs/future-data-model.md](docs/future-data-model.md)
 - JV-Link expansion roadmap: [docs/jvlink-expansion-roadmap.md](docs/jvlink-expansion-roadmap.md)
 - Weekend operations flow: [docs/weekend-operations-flow.md](docs/weekend-operations-flow.md)
+- Mini PC race-day automation: [docs/mini-pc-raceday-automation.md](docs/mini-pc-raceday-automation.md)
 - Environment notes: [docs/development-environment.md](docs/development-environment.md)
 - Windows fetch notes: [docs/windows-fetch-setup.md](docs/windows-fetch-setup.md)
 

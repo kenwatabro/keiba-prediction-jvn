@@ -13,6 +13,7 @@
 - [Future Data Model](./future-data-model.md)
 - [JV-Link Expansion Roadmap](./jvlink-expansion-roadmap.md)
 - [Weekend Operations Flow](./weekend-operations-flow.md)
+- [Mini PC Race-Day Automation Design](./mini-pc-raceday-automation.md)
 - [Development Environment Memo](./development-environment.md)
 - [Windows Fetch Setup](./windows-fetch-setup.md)
 
@@ -29,6 +30,7 @@
 - Read `Future Data Model` for planned expansion beyond the current `RA` and `SE` scope.
 - Read `JV-Link Expansion Roadmap` when deciding which additional record types to integrate next.
 - Read `Weekend Operations Flow` before changing Friday packaging or race-day prediction operations.
+- Read `Mini PC Race-Day Automation Design` before implementing unattended netkeiba collection or race-day schedulers.
 
 ## Current Scope Summary
 

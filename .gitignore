@@ -14,6 +14,7 @@ data/packages/
 docs/*
 !docs/project-documents.md
 !docs/weekend-operations-flow.md
+!docs/mini-pc-raceday-automation.md
 doc/
 
 References/
