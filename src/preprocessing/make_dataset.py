@@ -1891,7 +1891,7 @@ def make_prediction_dataset(
         print("No pending races matched the requested filters.")
         return
 
-    prediction_df = prediction_df.dropna(subset=["RaceDate"] + feature_cols)
+    prediction_df = prediction_df.dropna(subset=["RaceDate", "RaceKey", "Umaban"])
     prediction_df = prediction_df.drop(columns=["HasResult", "KakuteiJyuni", "TargetTop3", "TargetWin"], errors="ignore")
     prediction_df = prediction_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
 

@@ -13,8 +13,8 @@ REMOTE="k@192.168.0.100"
 REMOTE_DIR="~/projects/keiba-prediction-jvn/data/packages"
 BUILD_TRAIN_DATA=0
 DROP_RAW_IDS=1
-INCLUDE_HC=1
-INCLUDE_WC=1
+INCLUDE_HC=0
+INCLUDE_WC=0
 INCLUDE_WH=0
 INCLUDE_O1=0
 INCLUDE_MARKET_FEATURES=0
@@ -41,8 +41,6 @@ Defaults:
   --package-root ./data/packages
   reuse ./data/processed/train_data.csv
   --drop-raw-ids
-  --include-hc
-  --include-wc
 
 Options:
   --package-date YYYYMMDD
@@ -61,8 +59,8 @@ Options:
   --keep-raw-ids
   --include-o1
   --include-wh
-  --no-include-hc
-  --no-include-wc
+  --include-hc
+  --include-wc
   --include-market-features
   --dry-run                         Print commands without running them.
   -h, --help
@@ -148,12 +146,12 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_WH=1
       shift
       ;;
-    --no-include-hc)
-      INCLUDE_HC=0
+    --include-hc)
+      INCLUDE_HC=1
       shift
       ;;
-    --no-include-wc)
-      INCLUDE_WC=0
+    --include-wc)
+      INCLUDE_WC=1
       shift
       ;;
     --include-market-features)

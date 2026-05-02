@@ -105,9 +105,12 @@ def copy_model_artifacts(model_source: Path, features_source: Path, package_dir:
     model_path = package_dir / "model.txt"
     features_path = package_dir / "features.json"
     model_metadata_path = build_feature_metadata_path(model_path)
-    shutil.copy2(model_source, model_path)
-    shutil.copy2(features_source, features_path)
-    shutil.copy2(features_source, model_metadata_path)
+    if model_source.resolve() != model_path.resolve():
+        shutil.copy2(model_source, model_path)
+    if features_source.resolve() != features_path.resolve():
+        shutil.copy2(features_source, features_path)
+    if features_source.resolve() != model_metadata_path.resolve():
+        shutil.copy2(features_source, model_metadata_path)
     return model_path, features_path
 
 
@@ -151,9 +154,11 @@ def build_or_copy_model(args: argparse.Namespace, package_dir: Path) -> tuple[Pa
 
 
 def filter_prediction_dates(source_path: Path, prediction_dates: list[str], output_path: Path | None = None) -> None:
-    if not prediction_dates:
-        return
     output = output_path or source_path
+    if not prediction_dates:
+        if output.resolve() != source_path.resolve():
+            shutil.copy2(source_path, output)
+        return
     df = pd.read_csv(source_path, low_memory=False)
     if "RaceDate" not in df.columns:
         raise ValueError("prediction_base_weekend.csv must contain RaceDate when --prediction-date is used.")
@@ -167,6 +172,15 @@ def filter_prediction_dates(source_path: Path, prediction_dates: list[str], outp
     if missing_dates:
         raise ValueError(f"prediction_base_weekend.csv is missing requested dates: {missing_dates}")
     filtered.to_csv(output, index=False)
+
+
+def try_filter_prediction_dates(source_path: Path, prediction_dates: list[str], output_path: Path) -> bool:
+    try:
+        filter_prediction_dates(source_path, prediction_dates, output_path=output_path)
+    except ValueError as exc:
+        print(f"Reusable prediction base skipped: {exc}")
+        return False
+    return True
 
 
 def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -> Path:
@@ -186,9 +200,9 @@ def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -
 
     prediction_base_cache = Path(args.prediction_base_cache) if args.prediction_base_cache else None
     if prediction_base_cache and prediction_base_cache.exists():
-        shutil.copy2(prediction_base_cache, prediction_path)
-        filter_prediction_dates(prediction_path, args.prediction_date)
-        return prediction_path
+        if try_filter_prediction_dates(prediction_base_cache, args.prediction_date, prediction_path):
+            return prediction_path
+        print(f"Rebuilding prediction base cache: {prediction_base_cache}")
 
     build_output_path = prediction_base_cache or prediction_path
     make_prediction_dataset(
@@ -203,9 +217,7 @@ def build_or_copy_prediction_base(args: argparse.Namespace, package_dir: Path) -
     )
     if not build_output_path.exists():
         raise FileNotFoundError(f"Prediction base was not created: {build_output_path}")
-    if build_output_path.resolve() != prediction_path.resolve():
-        shutil.copy2(build_output_path, prediction_path)
-    filter_prediction_dates(prediction_path, args.prediction_date)
+    filter_prediction_dates(build_output_path, args.prediction_date, output_path=prediction_path)
     return prediction_path
 
 
