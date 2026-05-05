@@ -62,7 +62,13 @@ class JVLinkClient:
         self.logger.info("JV-Link save path set to %s", save_path)
         return result
 
-    def open_dataspec(self, dataspec: str, start_time: str, options: int = 1) -> JVOpenResult:
+    def open_dataspec(
+        self,
+        dataspec: str,
+        start_time: str,
+        options: int = 1,
+        allow_empty: bool = False,
+    ) -> JVOpenResult:
         """Open a JV-Link data stream and normalize the COM return shape."""
         self._ensure_initialized()
 
@@ -78,8 +84,23 @@ class JVLinkClient:
             download_count=self._coerce_int(values[2]) if len(values) > 2 else None,
             last_file_timestamp=self._coerce_text(values[3]) if len(values) > 3 else None,
         )
+        if result.return_code == -1 and allow_empty:
+            self.logger.warning(
+                "JVOpen returned -1 for dataspec=%s option=%s from_time=%s. No data is currently available.",
+                dataspec,
+                options,
+                start_time,
+            )
+            return result
         if result.return_code < 0:
-            raise RuntimeError(self._describe_jvopen_error(dataspec, result.return_code))
+            raise RuntimeError(
+                self._describe_jvopen_error(
+                    dataspec,
+                    result.return_code,
+                    start_time=start_time,
+                    options=options,
+                )
+            )
 
         self.logger.info(
             "JVOpen succeeded: dataspec=%s option=%s read_count=%s download_count=%s last_ts=%s",
@@ -91,11 +112,18 @@ class JVLinkClient:
         )
         return result
 
-    def open_realtime_dataspec(self, dataspec: str, key: str) -> int:
+    def open_realtime_dataspec(self, dataspec: str, key: str, allow_empty: bool = False) -> int:
         """Open a realtime JV-Link stream via JVRTOpen."""
         self._ensure_initialized()
 
         result = int(self.jv_link.JVRTOpen(dataspec, key))
+        if result == -1 and allow_empty:
+            self.logger.warning(
+                "JVRTOpen returned -1 for dataspec=%s key=%s. No realtime data is currently available.",
+                dataspec,
+                key,
+            )
+            return result
         if result < 0:
             raise RuntimeError(self._describe_jvrtopen_error(dataspec, result))
 
@@ -292,22 +320,59 @@ class JVLinkClient:
         raise last_error
 
     @staticmethod
-    def _describe_jvopen_error(dataspec: str, code: int) -> str:
+    def _describe_jvopen_error(
+        dataspec: str,
+        code: int,
+        *,
+        start_time: str | None = None,
+        options: int | None = None,
+    ) -> str:
+        context_parts = []
+        if options is not None:
+            context_parts.append(f"option={options}")
+        if start_time:
+            context_parts.append(f"from_time={start_time}")
+        context = f" ({', '.join(context_parts)})" if context_parts else ""
+
+        if code == -1:
+            message = (
+                f"JVOpen failed for {dataspec} with code -1{context}. "
+                "JV-Link did not find a readable distribution for that dataspec / time window."
+            )
+            if options in (3, 4):
+                message += (
+                    " Setup-mode historical fetches often return this when the target month or day has not "
+                    "been published yet. For race-day runs, fetch the daily bundle after racing / publication "
+                    "has completed, or use the dedicated realtime / race-day wrappers for same-day data."
+                )
+            else:
+                message += (
+                    " Check whether the requested date actually has published data and whether the selected "
+                    "dataspec / option combination matches that distribution mode."
+                )
+            return message
         if code == -112:
             return (
-                f"JVOpen failed for {dataspec} with code -112 (JVERR_CONNECT). "
+                f"JVOpen failed for {dataspec} with code -112 (JVERR_CONNECT){context}. "
                 "DataLab subscription/login/setup, session state, network connectivity, or FromTime may be invalid."
             )
         if code == -501:
             return (
-                f"JVOpen failed for {dataspec} with code -501. "
+                f"JVOpen failed for {dataspec} with code -501{context}. "
                 "Setup data mode could not proceed. Retry with option=3 so the setup-source dialog is shown again, "
                 "or complete online initial setup from JV-Link settings first."
             )
-        return f"JVOpen failed for {dataspec} with code: {code}"
+        return f"JVOpen failed for {dataspec} with code: {code}{context}"
 
     @staticmethod
     def _describe_jvrtopen_error(dataspec: str, code: int) -> str:
+        if code == -1:
+            return (
+                f"JVRTOpen failed for {dataspec} with code -1. "
+                "No realtime data is currently available for that key. "
+                "For odds snapshots such as O1, this usually means the target race is not currently on sale "
+                "or the requested race date is not part of the current realtime distribution window."
+            )
         if code == -112:
             return (
                 f"JVRTOpen failed for {dataspec} with code -112 (JVERR_CONNECT). "

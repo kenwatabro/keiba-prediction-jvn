@@ -9,18 +9,19 @@ SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "raw"
 RACE_DAY_RECORD_SPECS = {"WH", "WE", "AV", "JC", "TC", "CC"}
 NON_ACCUMULATED_JVOPEN_SPECS = {"RACERCVN"}
-REALTIME_JVRT_SPEC_MAP = {
+REALTIME_JVRT_SPEC_CONFIG = {
+    # Realtime body weight bulletin keyed by race date (YYYYMMDD).
+    "WH": {"dataspec": "0B11", "key_mode": "date"},
+    # Realtime race-day bulletin stream keyed by race date (YYYYMMDD).
+    "WE": {"dataspec": "0B14", "key_mode": "date"},
+    "AV": {"dataspec": "0B14", "key_mode": "date"},
+    "JC": {"dataspec": "0B14", "key_mode": "date"},
+    "TC": {"dataspec": "0B14", "key_mode": "date"},
+    "CC": {"dataspec": "0B14", "key_mode": "date"},
     # Realtime single-win odds / popularity snapshot keyed by RaceKey.
-    "O1": "0B31",
+    "O1": {"dataspec": "0B31", "key_mode": "race_key"},
 }
 JVOPEN_SPEC_MAP = {
-    # These are record IDs inside the race-card dataspec, not standalone JVOpen dataspecs.
-    "WH": "RACERCVN",
-    "WE": "RACERCVN",
-    "AV": "RACERCVN",
-    "JC": "RACERCVN",
-    "TC": "RACERCVN",
-    "CC": "RACERCVN",
     # Workout record IDs are distributed through their workout dataspecs.
     "HC": "SLOP",
     "WC": "WOOD",
@@ -97,17 +98,35 @@ def resolve_dataspec(dataspec: str) -> tuple[str, str | None]:
     return jvopen_spec, record_spec_filter
 
 
-def resolve_realtime_dataspec(dataspec: str) -> str | None:
-    return REALTIME_JVRT_SPEC_MAP.get(dataspec.upper())
+def resolve_realtime_dataspec_config(dataspec: str) -> dict[str, str] | None:
+    return REALTIME_JVRT_SPEC_CONFIG.get(dataspec.upper())
 
 
 def validate_realtime_request(
     requested_spec: str,
     rt_spec: str,
+    key_mode: str,
     start_date: str,
     end_date: str,
     rt_key: str | None,
 ) -> str:
+    if key_mode == "date":
+        if start_date != end_date:
+            raise ValueError(
+                f"{requested_spec} realtime fetch only supports a single race date. "
+                "Use the same start/end date."
+            )
+        if rt_key:
+            normalized_key = rt_key.strip()
+            if len(normalized_key) != 8 or not normalized_key.isdigit():
+                raise ValueError(f"Invalid --rt-key '{rt_key}'. Expected an 8-digit race date for {requested_spec}.")
+            if normalized_key != start_date:
+                raise ValueError(
+                    f"{requested_spec} --rt-key date {normalized_key} does not match --start/--end {start_date}."
+                )
+            return normalized_key
+        return start_date
+
     if not rt_key:
         raise ValueError(
             f"{requested_spec} is fetched through realtime dataspec {rt_spec}. "
@@ -157,7 +176,8 @@ def explain_jvopen_error(code: int) -> str:
         return (
             "JVOpen failed with code -111. This usually means the dataspec or its parameters are invalid. "
             "Some record IDs such as WH/WE/AV/JC/TC/CC are not standalone JVOpen dataspecs and must be read "
-            "through the race-card dataspec (for example RACERCVN) and filtered locally."
+            "through their realtime dataspecs (for example WH via 0B11, or WE/AV/JC/TC/CC via 0B14) "
+            "and filtered locally."
         )
     if code == -112:
         return (
@@ -185,6 +205,9 @@ def fetch_data(
     overwrite=False,
     save_path=None,
     rt_key=None,
+    allow_empty=False,
+    filter_start_date=None,
+    filter_end_date=None,
 ):
     logger = logging.getLogger(__name__)
     if JVLinkClient is None:
@@ -193,12 +216,23 @@ def fetch_data(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     requested_spec = dataspec.upper()
-    realtime_spec = resolve_realtime_dataspec(requested_spec)
+    effective_filter_start = filter_start_date or start_date
+    effective_filter_end = filter_end_date or end_date
+    realtime_spec_config = resolve_realtime_dataspec_config(requested_spec)
     jvopen_spec, record_spec_filter = resolve_dataspec(requested_spec)
-    if realtime_spec is not None:
-        realtime_key = validate_realtime_request(requested_spec, realtime_spec, start_date, end_date, rt_key)
+    if realtime_spec_config is not None:
+        realtime_spec = realtime_spec_config["dataspec"]
+        realtime_key = validate_realtime_request(
+            requested_spec,
+            realtime_spec,
+            realtime_spec_config["key_mode"],
+            start_date,
+            end_date,
+            rt_key,
+        )
         filename = f"{requested_spec}_{realtime_key}.txt"
     else:
+        realtime_spec = None
         realtime_key = None
         filename = f"{requested_spec}_{start_date}_{end_date}.txt"
     filepath = output_path / filename
@@ -221,7 +255,10 @@ def fetch_data(
                 requested_spec,
                 realtime_key,
             )
-            client.open_realtime_dataspec(realtime_spec, realtime_key)
+            realtime_result = client.open_realtime_dataspec(realtime_spec, realtime_key, allow_empty=allow_empty)
+            if realtime_result == -1:
+                logger.warning("No realtime %s snapshot was available for key=%s.", requested_spec, realtime_key)
+                return None
         else:
             effective_option = normalize_option(start_date, end_date, option)
             if record_spec_filter is not None and option is None:
@@ -250,7 +287,15 @@ def fetch_data(
             if record_spec_filter is not None:
                 logger.info("Filtering opened %s stream down to %s records.", jvopen_spec, record_spec_filter)
 
-            open_result = client.open_dataspec(jvopen_spec, period_str, options=effective_option)
+            open_result = client.open_dataspec(
+                jvopen_spec,
+                period_str,
+                options=effective_option,
+                allow_empty=allow_empty,
+            )
+            if open_result.return_code == -1:
+                logger.warning("No %s data was available for %s.", requested_spec, period_str)
+                return None
 
             if open_result.download_count and open_result.download_count > 0:
                 logger.info(
@@ -281,7 +326,7 @@ def fetch_data(
                 if not line:
                     continue
                 if realtime_spec is None and start_date != end_date:
-                    if not should_keep_line(line, start_date, end_date):
+                    if not should_keep_line(line, effective_filter_start, effective_filter_end):
                         skipped_out_of_range += 1
                         continue
                 if record_spec_filter is not None and line[:2] != record_spec_filter:
@@ -316,12 +361,15 @@ if __name__ == "__main__":
     parser.add_argument('--end', type=validate_date, required=True, help='End date YYYYMMDD')
     parser.add_argument('--spec', type=str, default='RACE', help='Data Spec (RACE, TOKU, etc)')
     parser.add_argument('--out', type=Path, default=DEFAULT_OUTPUT_DIR, help='Output directory')
-    parser.add_argument('--option', type=int, default=None, help='JVOpen option flag. If omitted, single date uses 1 and date range uses 4.')
+    parser.add_argument('--option', type=int, default=None, help='JVOpen option flag. If omitted, single date uses 1 and date range uses 3.')
     parser.add_argument('--sid', type=str, default='PythonJVLink', help='JV-Link SID label for this client')
     parser.add_argument('--poll-seconds', type=float, default=1.0, help='JVStatus polling interval in seconds')
     parser.add_argument('--overwrite', action='store_true', help='Re-fetch even if the target output file already exists')
     parser.add_argument('--save-path', type=Path, default=None, help='JV-Link local cache/save path, e.g. D:\\JVLinkData')
-    parser.add_argument('--rt-key', type=str, default=None, help='Realtime 16-digit RaceKey for JVRTOpen-backed specs such as O1')
+    parser.add_argument('--rt-key', type=str, default=None, help='Realtime key for JVRTOpen-backed specs. O1 expects a 16-digit RaceKey; WH/WE/AV/JC/TC/CC use the race date when omitted.')
+    parser.add_argument('--allow-empty', action='store_true', help='Treat missing data such as JVRTOpen -1 or JVOpen -1 as a warning instead of a fatal error')
+    parser.add_argument('--filter-start', type=validate_date, default=None, help='Optional local post-filter start date YYYYMMDD when JVOpen uses a wider fetch window')
+    parser.add_argument('--filter-end', type=validate_date, default=None, help='Optional local post-filter end date YYYYMMDD when JVOpen uses a wider fetch window')
 
     args = parser.parse_args()
 
@@ -337,4 +385,7 @@ if __name__ == "__main__":
         args.overwrite,
         args.save_path,
         args.rt_key,
+        args.allow_empty,
+        args.filter_start,
+        args.filter_end,
     )

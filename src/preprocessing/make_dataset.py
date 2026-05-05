@@ -531,7 +531,6 @@ def _apply_o1_market_snapshot(frame: pd.DataFrame, o1_frame: pd.DataFrame, inclu
     ]
     return result.drop(columns=["O1OddsDecimal", "O1Ninki"], errors="ignore")
 
-
 def _reshape_o3_wide_records(frame: pd.DataFrame) -> pd.DataFrame:
     output_columns = RACE_KEY_COLS + [
         "Umaban1",
@@ -1898,6 +1897,32 @@ def make_prediction_dataset(
     prediction_path = output_path / output_filename
     prediction_df.to_csv(prediction_path, index=False)
     print(f"Saved prediction dataset to {prediction_path}")
+
+
+def collect_pending_race_keys(
+    raw_dir=DEFAULT_RAW_DIR,
+    prediction_date: str | None = None,
+):
+    frame, _ = build_feature_frame(raw_dir=raw_dir)
+    if frame.empty:
+        return pd.DataFrame(columns=["RaceDate", "RaceKey", "PendingRunnerCount"])
+
+    pending = frame.loc[~frame["HasResult"]].copy()
+    if prediction_date is not None:
+        target_date = pd.Timestamp(prediction_date)
+        pending = pending.loc[pending["RaceDate"] == target_date].copy()
+
+    if pending.empty:
+        return pd.DataFrame(columns=["RaceDate", "RaceKey", "PendingRunnerCount"])
+
+    race_keys = (
+        pending.dropna(subset=["RaceDate", "RaceKey"])
+        .groupby(["RaceDate", "RaceKey"], as_index=False)
+        .agg(PendingRunnerCount=("Umaban", "nunique"))
+        .sort_values(["RaceDate", "RaceKey"])
+        .reset_index(drop=True)
+    )
+    return race_keys
 
 
 if __name__ == "__main__":

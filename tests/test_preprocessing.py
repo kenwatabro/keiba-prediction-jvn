@@ -11,7 +11,13 @@ PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
 sys.path.insert(0, str(PREPROCESSING_DIR))
 sys.path.insert(0, str((PROJECT_ROOT / "src" / "data_loader").resolve()))
 
-from make_dataset import build_umaren_pair_label_frame, build_wide_pair_label_frame, make_dataset, make_prediction_dataset  # noqa: E402
+from make_dataset import (  # noqa: E402
+    build_umaren_pair_label_frame,
+    build_wide_pair_label_frame,
+    collect_pending_race_keys,
+    make_dataset,
+    make_prediction_dataset,
+)
 from parser import JVParser  # noqa: E402
 from record_filter import should_keep_line  # noqa: E402
 
@@ -231,7 +237,6 @@ def build_o1_record(
         write_field(buffer, start + 2, 4, item.get("odds", "0120"))
         write_field(buffer, start + 6, 2, item.get("ninki", f"{index + 1:02d}"))
     return bytes(buffer)
-
 
 def build_o3_record(
     year: str = "2024",
@@ -1443,6 +1448,67 @@ class MakeDatasetTests(unittest.TestCase):
             self.assertEqual(len(prediction_data), 1)
             self.assertAlmostEqual(float(prediction_data.loc[0, "OddsDecimal"]), 14.0)
             self.assertEqual(int(prediction_data.loc[0, "Ninki"]), 1)
+
+    def test_collect_pending_race_keys_exports_unique_pending_races(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            raw_dir = temp_root / "raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_file = raw_dir / "sample.txt"
+            with raw_file.open("wb") as f:
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="11") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        umaban="01",
+                        ketto_num="1111111111",
+                        kakutei_jyuni="  ",
+                    )
+                    + b"\n"
+                )
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="11",
+                        umaban="02",
+                        ketto_num="2222222222",
+                        kakutei_jyuni="  ",
+                    )
+                    + b"\n"
+                )
+                f.write(build_ra_record(year="2024", month_day="0203", race_num="12") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0203",
+                        race_num="12",
+                        umaban="03",
+                        ketto_num="3333333333",
+                        kakutei_jyuni="  ",
+                    )
+                    + b"\n"
+                )
+                f.write(build_ra_record(year="2024", month_day="0204", race_num="01") + b"\n")
+                f.write(
+                    build_se_record(
+                        year="2024",
+                        month_day="0204",
+                        race_num="01",
+                        umaban="01",
+                        ketto_num="4444444444",
+                        kakutei_jyuni="01",
+                    )
+                    + b"\n"
+                )
+
+            race_keys = collect_pending_race_keys(raw_dir=raw_dir, prediction_date="2024-02-03")
+
+            self.assertEqual(race_keys["RaceKey"].tolist(), ["2024020301010111", "2024020301010112"])
+            self.assertEqual(race_keys["PendingRunnerCount"].tolist(), [2, 1])
 
 
 class FetchFilterTests(unittest.TestCase):

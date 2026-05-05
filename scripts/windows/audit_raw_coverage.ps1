@@ -1,11 +1,10 @@
 param(
     [string]$PythonCommand = "",
     [string]$ProjectRoot = "",
-    [string]$OutputDir = "D:\jra-van-raw",
-    [string]$SavePath = "D:\JVLinkData",
-    [string]$TargetDate = "",
-    [bool]$Overwrite = $true,
-    [bool]$AllowEmpty = $true
+    [string]$RawDir = "D:\jra-van-raw",
+    [string]$StartDate = "",
+    [string]$EndDate = "",
+    [string]$OutputPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,39 +46,26 @@ function Resolve-PythonCommand {
 }
 
 $PythonCommand = Resolve-PythonCommand $PythonCommand
-
-if (-not $TargetDate) {
-    $TargetDate = (Get-Date).ToString("yyyyMMdd")
-}
-
-$fetchScript = Join-Path $ProjectRoot "src\data_loader\fetch_raw_data.py"
-if (-not (Test-Path $fetchScript)) {
-    throw "fetch_raw_data.py not found: $fetchScript"
+$auditScript = Join-Path $ProjectRoot "src\data_loader\audit_raw_coverage.py"
+if (-not (Test-Path $auditScript)) {
+    throw "audit_raw_coverage.py not found: $auditScript"
 }
 
 $args = @(
-    $fetchScript,
-    "--start", $TargetDate,
-    "--end", $TargetDate,
-    "--spec", "WH",
-    "--out", $OutputDir,
-    "--save-path", $SavePath
+    $auditScript,
+    "--raw-dir", $RawDir
 )
-if ($Overwrite) {
-    $args += "--overwrite"
+if ($StartDate) {
+    $args += @("--start", $StartDate)
 }
-if ($AllowEmpty) {
-    $args += "--allow-empty"
+if ($EndDate) {
+    $args += @("--end", $EndDate)
+}
+if ($OutputPath) {
+    $args += @("--output", $OutputPath)
 }
 
-Write-Host "=== Fetch WH ($TargetDate) ==="
-Write-Host "Python command: $PythonCommand"
-Write-Host "Allow empty realtime body-weight stream: $AllowEmpty"
-Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
-$env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
 & $PythonCommand @args
 if ($LASTEXITCODE -ne 0) {
-    throw "fetch_raw_data.py failed for WH exit_code=$LASTEXITCODE"
+    throw "audit_raw_coverage.py failed with exit_code=$LASTEXITCODE"
 }
-
-Write-Host "WH race-day fetch completed."

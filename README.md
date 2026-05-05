@@ -76,7 +76,8 @@ If `--option` is omitted:
 Confirmed expanded fetch patterns:
 
 - historical race/result backfill: `--spec RACE --option 3`
-- race-day body-weight bulletin: `--spec WH --option 2` on a single target date
+- historical backfill is intentionally limited to `RACE`, `SLOP`, and `WOOD`
+- race-day body-weight bulletin: `--spec WH` on a single target date via realtime `JVRTOpen 0B14`
 - race-day single-win odds snapshot: `--spec O1 --rt-key <RaceKey>` via realtime `JVRTOpen`
 - hanro workout history: `--spec SLOP --option 3`
 - wood-chip workout history: `--spec WOOD --option 3`
@@ -84,7 +85,7 @@ Confirmed expanded fetch patterns:
 Examples:
 
 ```powershell
-python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20260314 --end 20260314 --spec O1 --rt-key 2026031406010111 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
@@ -94,15 +95,84 @@ Suggested semi-automatic operation:
 
 - `RACE`, `SLOP`, `WOOD` are the daily historical bundle.
 - `WH` is race-day only and should be fetched on the same day, not backfilled later.
+- `fetch_daily_bundle.ps1` uses a 7-day `RACE` lookback window with `option=1` on same-day runs so the latest published card/result data can still be picked up before the standalone daily slice exists.
+- `fetch_daily_bundle.ps1` keeps `SLOP` / `WOOD` on `option=3`.
 - Use the Windows wrapper scripts under `scripts/windows/` with Task Scheduler.
 
 Examples:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_daily_bundle.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_friday_weekend_bundle.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_wh.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1.ps1 -RaceKey 2026031406010111 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
 ```
+
+Recommended Friday operation for the weekend card:
+
+- use `fetch_friday_weekend_bundle.ps1` as the single Windows entrypoint for Saturday / Sunday race-card collection
+- it resolves the next Saturday / Sunday from `-AnchorDate` automatically
+- add `-IncludeNextMonday` when the Monday holiday card should be included too
+- pass `-TargetDates 20260502,20260503,20260505` if you want to pin the exact race dates yourself
+- pass `-HistoricalRaceStartDate` / `-HistoricalRaceEndDate` when you need a one-off historical `RACE` backfill
+- pass `-HistoricalWorkoutStartDate` / `-HistoricalWorkoutEndDate` when you need a one-off `SLOP` / `WOOD` backfill
+- `WH` and `O1` are race-day-only streams and are not part of historical backfill
+
+Examples:
+
+```powershell
+# Normal Friday run for the upcoming Saturday / Sunday card
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_friday_weekend_bundle.ps1 `
+  -AnchorDate 20260501 `
+  -OutputDir D:\jra-van-raw `
+  -SavePath D:\JVLinkData
+
+# Friday run including a Monday holiday card
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_friday_weekend_bundle.ps1 `
+  -AnchorDate 20260501 `
+  -IncludeNextMonday `
+  -OutputDir D:\jra-van-raw `
+  -SavePath D:\JVLinkData
+
+# Friday run plus one-off historical catch-up
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_friday_weekend_bundle.ps1 `
+  -AnchorDate 20260501 `
+  -HistoricalRaceStartDate 20250401 `
+  -HistoricalRaceEndDate 20250501 `
+  -HistoricalWorkoutStartDate 20250401 `
+  -HistoricalWorkoutEndDate 20250501 `
+  -OutputDir D:\jra-van-raw `
+  -SavePath D:\JVLinkData
+```
+
+Each Friday bundle run also writes a small JSON manifest under `D:\jra-van-raw\manifests\` so the downstream Ubuntu side can confirm which target dates and backfill windows were fetched.
+
+To audit whether historical raw coverage has gaps before you backfill, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\audit_raw_coverage.ps1 `
+  -RawDir D:\jra-van-raw `
+  -OutputPath D:\jra-van-raw\manifests\coverage_audit.json
+```
+
+That report summarizes the actual record-date coverage found inside the raw files for `RACE`, `SLOP`, and `WOOD`, and lists missing date ranges. Once you know the ranges to repair, you can reuse `fetch_friday_weekend_bundle.ps1` with `-HistoricalRaceStartDate/-HistoricalRaceEndDate` and `-HistoricalWorkoutStartDate/-HistoricalWorkoutEndDate`. `WH` and `O1` are intentionally excluded from historical backfill because they are race-day realtime streams.
+
+To poll live single-win odds for all pending races on a target day, first export RaceKeys on WSL:
+
+```bash
+./.venv/bin/python src/preprocessing/export_pending_racekeys.py \
+  --prediction-date 2026-03-21 \
+  --output-dir /mnt/d/jra-van-raw/racekeys \
+  --output-filename 20260321.txt
+```
+
+Then run the Windows batch wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1_batch.ps1 -RaceKeyFile D:\jra-van-raw\racekeys\20260321.txt -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+```
+
+The batch wrapper uses `--allow-empty`, so races that are not yet on sale are skipped without aborting the whole polling run.
 
 If a Windows fetch fails with a pywin32 `gen_py` / `CLSIDToClassMap` / `CLSIDToPackageMap` error, repair the local pywin32 cache once and retry:
 
@@ -114,7 +184,9 @@ The Windows wrapper scripts also set `JVLINK_FORCE_DYNAMIC_DISPATCH=1` before ca
 
 Recommended schedule:
 
-- once every evening after racing: `fetch_daily_bundle.ps1`
+- on Friday before weekend racing: `fetch_friday_weekend_bundle.ps1`
+- for same-day prediction, run `fetch_daily_bundle.ps1` on the target date from the Windows checkout
+- once every evening after racing, or for larger unattended catch-up: `fetch_daily_bundle.ps1`
 - on race days only, several times during the day: `fetch_raceday_wh.ps1`
 
 The practical architecture is:
@@ -221,6 +293,14 @@ For live market-aware prediction, fetch `O1` for the target race and build a pen
   --output-filename prediction_data_market.csv
 ```
 When an `O1_*.txt` snapshot is present, pending rows with missing market columns are filled from the latest `O1` snapshot for each `RaceKey + Umaban`. That makes the resulting CSV compatible with a model trained using `--include-market-features`.
+
+If you need the pending `RaceKey` list itself, export it directly:
+
+```bash
+./.venv/bin/python src/preprocessing/export_pending_racekeys.py \
+  --prediction-date 2026-03-14 \
+  --output-filename pending_race_keys.txt
+```
 
 ### 3c. Friday Weekend Package (Run on WSL)
 For race-day operation on the mini PC, build one transfer package on Friday:
