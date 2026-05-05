@@ -20,7 +20,7 @@ PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
 sys.path.insert(0, str(MODEL_DIR))
 sys.path.insert(0, str(PREPROCESSING_DIR))
 
-from predictor import load_feature_columns  # noqa: E402
+from predictor import build_feature_metadata_path, load_feature_columns  # noqa: E402
 from trainer import cast_categoricals  # noqa: E402
 
 
@@ -331,6 +331,104 @@ def split_discord_messages(content: str, limit: int = 1900) -> list[str]:
     return messages
 
 
+def load_feature_metadata(model_path: Path) -> dict[str, object]:
+    metadata_path = build_feature_metadata_path(model_path)
+    if not metadata_path.exists():
+        return {}
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def load_explanation_metadata(model_path: Path) -> dict[str, object]:
+    metadata = load_feature_metadata(model_path)
+    explanation = metadata.get("explanation", {})
+    return explanation if isinstance(explanation, dict) else {}
+
+
+def explanation_method_supported(explanation_metadata: dict[str, object]) -> bool:
+    method = explanation_metadata.get("method")
+    return method in (None, "lightgbm_pred_contrib")
+
+
+def resolve_explanation_top_k(requested: int | None, explanation_metadata: dict[str, object], default: int = 2) -> int:
+    if requested is not None:
+        return max(0, requested)
+    raw = explanation_metadata.get("default_top_k", default)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def feature_display_names(explanation_metadata: dict[str, object]) -> dict[str, str]:
+    raw = explanation_metadata.get("feature_display_names", {})
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def format_contribution_value(value: float) -> str:
+    return f"{value:+.3f}"
+
+
+def format_feature_contribution(feature: str, value: float, display_names: dict[str, str]) -> str:
+    label = display_names.get(feature, feature)
+    return f"{label} {format_contribution_value(value)}"
+
+
+def top_contribution_text(
+    contributions: pd.Series,
+    display_names: dict[str, str],
+    top_k: int,
+    positive: bool,
+) -> str:
+    if top_k <= 0:
+        return ""
+    numeric = pd.to_numeric(contributions, errors="coerce").dropna()
+    if positive:
+        selected = numeric.loc[numeric.gt(0)].sort_values(ascending=False).head(top_k)
+    else:
+        selected = numeric.loc[numeric.lt(0)].sort_values(ascending=True).head(top_k)
+    return ", ".join(format_feature_contribution(str(feature), float(value), display_names) for feature, value in selected.items())
+
+
+def add_prediction_explanations(
+    frame: pd.DataFrame,
+    booster: lgb.Booster,
+    feature_frame: pd.DataFrame,
+    feature_columns: list[str],
+    explanation_metadata: dict[str, object],
+    top_k: int,
+) -> pd.DataFrame:
+    result = frame.copy()
+    if top_k <= 0 or not explanation_method_supported(explanation_metadata):
+        return result
+
+    contrib = booster.predict(feature_frame, pred_contrib=True)
+    contrib_df = pd.DataFrame(contrib, index=result.index)
+    expected_columns = len(feature_columns) + 1
+    if contrib_df.shape[1] != expected_columns:
+        raise ValueError(
+            "Unexpected LightGBM contribution shape: "
+            f"got {contrib_df.shape[1]} columns, expected {expected_columns}."
+        )
+
+    feature_contrib = contrib_df.iloc[:, : len(feature_columns)].copy()
+    feature_contrib.columns = feature_columns
+    display_names = feature_display_names(explanation_metadata)
+    result["ScoreDrivers"] = feature_contrib.apply(
+        lambda row: top_contribution_text(row, display_names, top_k, positive=True),
+        axis=1,
+    )
+    result["ScoreDrags"] = feature_contrib.apply(
+        lambda row: top_contribution_text(row, display_names, top_k, positive=False),
+        axis=1,
+    )
+    result["ScoreBias"] = pd.to_numeric(contrib_df.iloc[:, -1], errors="coerce")
+    result["ScoreRawMargin"] = pd.to_numeric(contrib_df.sum(axis=1), errors="coerce")
+    return result
+
+
 def format_discord_messages(
     predictions: pd.DataFrame,
     monitor: dict[str, object],
@@ -365,6 +463,9 @@ def format_discord_messages(
                 f"{int(row['PredictionRankInRace'])}. {int(row['Umaban'])} "
                 f"{row.get('Bamei', '')} {float(row['Prediction']):.4f} [{weight_mark}]"
             )
+            score_drivers = row.get("ScoreDrivers", "")
+            if isinstance(score_drivers, str) and score_drivers:
+                lines.append(f"   + {score_drivers}")
         race_blocks.append("\n".join(lines))
 
     messages = ["\n".join(header)]
@@ -419,6 +520,8 @@ def run(args: argparse.Namespace) -> None:
     model_path = resolve_model_path(args)
     booster = lgb.Booster(model_file=str(model_path))
     feature_columns = load_feature_columns(model_path) or list(booster.feature_name())
+    explanation_metadata = load_explanation_metadata(model_path)
+    explanation_top_k = resolve_explanation_top_k(args.explanation_top_k, explanation_metadata)
 
     prediction_base_path = resolve_prediction_base_path(args)
     prediction_df = build_prediction_frame(
@@ -456,6 +559,15 @@ def run(args: argparse.Namespace) -> None:
     )
     feature_frame = build_model_feature_frame(merged, feature_columns)
     merged["Prediction"] = booster.predict(feature_frame)
+    if not args.disable_explanations:
+        merged = add_prediction_explanations(
+            merged,
+            booster,
+            feature_frame,
+            feature_columns,
+            explanation_metadata,
+            top_k=explanation_top_k,
+        )
     merged["PredictionRankInRace"] = (
         merged.sort_values(["RaceKey", "Prediction"], ascending=[True, False])
         .groupby("RaceKey", sort=False)
@@ -477,6 +589,10 @@ def run(args: argparse.Namespace) -> None:
         "NetkeibaWeightAvailable",
         "Prediction",
         "PredictionRankInRace",
+        "ScoreDrivers",
+        "ScoreDrags",
+        "ScoreBias",
+        "ScoreRawMargin",
     ]
     output_columns = [column for column in output_columns if column in merged.columns]
     predictions = merged.sort_values(["RaceKey", "Prediction"], ascending=[True, False])[output_columns].copy()
@@ -528,6 +644,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--discord-webhook-url", default=None, help="Discord webhook URL. Defaults to DISCORD_WEBHOOK_URL.")
     parser.add_argument("--discord-top-n", type=int, default=3, help="Number of runners per race to include.")
     parser.add_argument("--discord-races-per-message", type=int, default=6, help="Race blocks per Discord message.")
+    parser.add_argument(
+        "--explanation-top-k",
+        type=int,
+        default=None,
+        help="Positive score contributors per runner. Defaults to explanation.default_top_k or 2.",
+    )
+    parser.add_argument("--disable-explanations", action="store_true", help="Skip LightGBM pred_contrib explanation output.")
     parser.add_argument("--dry-run-discord", action="store_true", help="Print Discord messages without sending.")
     parser.add_argument("--env-file", default=str(PROJECT_ROOT / ".env"), help="Optional dotenv file for local secrets.")
     return parser.parse_args()

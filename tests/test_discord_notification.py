@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -11,10 +12,13 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from predict_today_netkeiba_weights import (  # noqa: E402
+    add_prediction_explanations,
     apply_race_day_csv,
     format_discord_messages,
+    load_explanation_metadata,
     load_env_file,
     load_prediction_base,
+    resolve_explanation_top_k,
     split_discord_messages,
 )
 
@@ -77,6 +81,37 @@ class DiscordNotificationTests(unittest.TestCase):
         self.assertEqual(messages, ["race-a\nrace-b", "race-c"])
         self.assertTrue(all(len(message) <= 14 for message in messages))
 
+    def test_load_explanation_metadata_reads_model_feature_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_path = Path(temp_dir) / "model.txt"
+            metadata_path = Path(temp_dir) / "model.features.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "feature_columns": ["FeatureA"],
+                        "explanation": {
+                            "method": "lightgbm_pred_contrib",
+                            "score_space": "raw_margin",
+                            "default_top_k": 1,
+                            "feature_display_names": {"FeatureA": "特徴A"},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            explanation = load_explanation_metadata(model_path)
+
+            self.assertEqual(explanation["method"], "lightgbm_pred_contrib")
+            self.assertEqual(explanation["default_top_k"], 1)
+            self.assertEqual(explanation["feature_display_names"], {"FeatureA": "特徴A"})
+
+    def test_resolve_explanation_top_k_prefers_cli_then_metadata(self):
+        self.assertEqual(resolve_explanation_top_k(3, {"default_top_k": 1}), 3)
+        self.assertEqual(resolve_explanation_top_k(None, {"default_top_k": "4"}), 4)
+        self.assertEqual(resolve_explanation_top_k(None, {"default_top_k": "bad"}), 2)
+
     def test_format_discord_messages_summarizes_monitor_and_top_predictions(self):
         predictions = pd.DataFrame(
             [
@@ -89,6 +124,7 @@ class DiscordNotificationTests(unittest.TestCase):
                     "Bamei": "Sample A",
                     "Prediction": 0.321,
                     "NetkeibaWeightAvailable": 1,
+                    "ScoreDrivers": "馬_複勝率 +0.420, 騎手_勝率 +0.180",
                 },
                 {
                     "RaceKey": "2026050205010101",
@@ -99,6 +135,7 @@ class DiscordNotificationTests(unittest.TestCase):
                     "Bamei": "Sample B",
                     "Prediction": 0.123,
                     "NetkeibaWeightAvailable": 0,
+                    "ScoreDrivers": "調教師_複勝率 +0.210",
                 },
                 {
                     "RaceKey": "2026050205010101",
@@ -135,8 +172,67 @@ class DiscordNotificationTests(unittest.TestCase):
         self.assertIn("Missing features: BaTaijyu=1", messages[0])
         self.assertIn("東京 1R 10:05", messages[1])
         self.assertIn("1. 3 Sample A 0.3210 [W]", messages[1])
+        self.assertIn("   + 馬_複勝率 +0.420, 騎手_勝率 +0.180", messages[1])
         self.assertIn("2. 7 Sample B 0.1230 [-]", messages[1])
+        self.assertIn("   + 調教師_複勝率 +0.210", messages[1])
         self.assertNotIn("Sample C", messages[1])
+
+    def test_add_prediction_explanations_uses_lightgbm_contrib_and_display_names(self):
+        class FakeBooster:
+            def predict(self, feature_frame, pred_contrib=False):
+                self.pred_contrib = pred_contrib
+                return [
+                    [0.31, -0.20, 0.05],
+                    [-0.15, 0.44, 0.02],
+                ]
+
+        frame = pd.DataFrame(
+            [
+                {"RaceKey": "2026050205010101", "Umaban": 3},
+                {"RaceKey": "2026050205010101", "Umaban": 7},
+            ]
+        )
+        feature_frame = pd.DataFrame(
+            [
+                {"FeatureA": 1.0, "FeatureB": 2.0},
+                {"FeatureA": 2.0, "FeatureB": 1.0},
+            ]
+        )
+        booster = FakeBooster()
+
+        explained = add_prediction_explanations(
+            frame,
+            booster,
+            feature_frame,
+            ["FeatureA", "FeatureB"],
+            {"method": "lightgbm_pred_contrib", "feature_display_names": {"FeatureA": "特徴A", "FeatureB": "特徴B"}},
+            top_k=1,
+        )
+
+        self.assertTrue(booster.pred_contrib)
+        self.assertEqual(explained.loc[0, "ScoreDrivers"], "特徴A +0.310")
+        self.assertEqual(explained.loc[0, "ScoreDrags"], "特徴B -0.200")
+        self.assertAlmostEqual(float(explained.loc[0, "ScoreBias"]), 0.05)
+        self.assertAlmostEqual(float(explained.loc[0, "ScoreRawMargin"]), 0.16)
+
+    def test_add_prediction_explanations_skips_unsupported_method(self):
+        class FakeBooster:
+            def predict(self, feature_frame, pred_contrib=False):
+                raise AssertionError("pred_contrib should not be called")
+
+        frame = pd.DataFrame([{"RaceKey": "2026050205010101", "Umaban": 3}])
+        feature_frame = pd.DataFrame([{"FeatureA": 1.0}])
+
+        explained = add_prediction_explanations(
+            frame,
+            FakeBooster(),
+            feature_frame,
+            ["FeatureA"],
+            {"method": "future_method"},
+            top_k=1,
+        )
+
+        self.assertEqual(explained.columns.tolist(), frame.columns.tolist())
 
 
 if __name__ == "__main__":
