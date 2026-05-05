@@ -55,8 +55,12 @@ HORSE_CONTEXT_COLS = [
     "ChokyosiCode",
     "BanusiCode",
     "Futan",
+    "FutanBefore",
+    "Blinker",
     "KisyuCode",
+    "KisyuCodeBefore",
     "MinaraiCD",
+    "MinaraiCDBefore",
     "BaTaijyu",
     "ZogenFugo",
     "ZogenSa",
@@ -71,6 +75,7 @@ HORSE_CONTEXT_COLS = [
     "Jyuni4c",
     "Odds",
     "Ninki",
+    "KyakusituKubun",
 ]
 WH_BASE_COLS = [
     "HappyoTime",
@@ -272,11 +277,118 @@ OUTPUT_BASE_COLS = [
     "TargetWin",
     "HasResult",
 ]
+POLICY_ONLY_COLS = [
+    "JyokenName",
+    "FutanBefore",
+    "Blinker",
+    "KisyuCodeBefore",
+    "MinaraiCDBefore",
+    "KyakusituKubun",
+]
 O1_BASE_COLS = [
     "MakeDate",
     "HappyoTime",
 ]
+O2_BASE_COLS = [
+    "MakeDate",
+    "HappyoTime",
+]
+O3_BASE_COLS = [
+    "MakeDate",
+    "HappyoTime",
+]
 SMOOTHING_PRIOR_WEIGHT = 20.0
+RAW_FILE_PREFIXES_BY_SPEC = {
+    "RA": ["RACE_"],
+    "SE": ["RACE_"],
+    "HR": ["RACE_", "HR_"],
+    "O1": ["RACE_", "O1_"],
+    "O2": ["RACE_", "O2_"],
+    "O3": ["RACE_", "O3_"],
+    "O4": ["RACE_", "O4_"],
+    "O5": ["RACE_", "O5_"],
+    "O6": ["RACE_", "O6_"],
+    "WH": ["WH_"],
+    "HC": ["SLOP_", "HC_"],
+    "WC": ["WOOD_", "WC_"],
+}
+
+
+def _unique_preserve_order(columns: list[str]) -> list[str]:
+    return list(dict.fromkeys(columns))
+
+
+def _wh_record_fields() -> list[str]:
+    fields = RACE_KEY_COLS + WH_BASE_COLS
+    for index in range(18):
+        item_no = index + 1
+        fields.extend(
+            [
+                f"Umaban{item_no}",
+                f"BaTaijyu{item_no}",
+                f"ZogenFugo{item_no}",
+                f"ZogenSa{item_no}",
+            ]
+        )
+    return _unique_preserve_order(fields)
+
+
+def _o1_record_fields() -> list[str]:
+    fields = RACE_KEY_COLS + O1_BASE_COLS
+    for index in range(28):
+        item_no = index + 1
+        fields.extend([f"Umaban{item_no}", f"Odds{item_no}", f"Ninki{item_no}"])
+    return _unique_preserve_order(fields)
+
+
+def _o2_record_fields() -> list[str]:
+    fields = RACE_KEY_COLS + O2_BASE_COLS
+    for index in range(153):
+        item_no = index + 1
+        fields.extend([f"UmarenKumi{item_no}", f"UmarenOdds{item_no}", f"UmarenNinki{item_no}"])
+    return _unique_preserve_order(fields)
+
+
+def _o3_record_fields() -> list[str]:
+    fields = RACE_KEY_COLS + O3_BASE_COLS
+    for index in range(153):
+        item_no = index + 1
+        fields.extend([f"WideKumi{item_no}", f"WideOddsLow{item_no}", f"WideOddsHigh{item_no}", f"WideNinki{item_no}"])
+    return _unique_preserve_order(fields)
+
+
+def _hr_record_fields(include_umaren: bool = False, include_wide: bool = False) -> list[str]:
+    fields = list(RACE_KEY_COLS)
+    if include_umaren:
+        for index in range(3):
+            item_no = index + 1
+            fields.extend([f"PayUmarenKumi{item_no}", f"PayUmarenAmount{item_no}", f"PayUmarenNinki{item_no}"])
+    if include_wide:
+        for index in range(7):
+            item_no = index + 1
+            fields.extend([f"PayWideKumi{item_no}", f"PayWideAmount{item_no}", f"PayWideNinki{item_no}"])
+    return _unique_preserve_order(fields)
+
+
+def _feature_build_record_fields(
+    include_o1: bool = False,
+    include_wh: bool = False,
+    include_hc: bool = False,
+    include_wc: bool = False,
+) -> dict[str, list[str]]:
+    fields_by_spec = {
+        "RA": _unique_preserve_order(RACE_KEY_COLS + RACE_CONTEXT_COLS),
+        "SE": _unique_preserve_order(RACE_KEY_COLS + HORSE_CONTEXT_COLS),
+    }
+    if include_o1:
+        fields_by_spec["O1"] = _o1_record_fields()
+    if include_wh:
+        fields_by_spec["WH"] = _wh_record_fields()
+    if include_hc:
+        fields_by_spec["HC"] = _unique_preserve_order(HC_CONTEXT_COLS)
+    if include_wc:
+        fields_by_spec["WC"] = _unique_preserve_order(WC_CONTEXT_COLS)
+    return fields_by_spec
 
 
 def _available_cols(frame: pd.DataFrame, columns: list[str]) -> list[str]:
@@ -310,6 +422,19 @@ def _parse_mdhm_to_minutes(value: object) -> int:
     hour = int(text[-4:-2])
     minute = int(text[-2:])
     return hour * 60 + minute
+
+
+def _parse_pair_kumi(value: object) -> tuple[int | None, int | None]:
+    if pd.isna(value):
+        return None, None
+    text = str(value).strip()
+    if len(text) != 4 or not text.isdigit():
+        return None, None
+    umaban1 = int(text[:2])
+    umaban2 = int(text[2:])
+    if umaban1 <= 0 or umaban2 <= 0 or umaban1 > 28 or umaban2 > 28 or umaban1 == umaban2:
+        return None, None
+    return tuple(sorted((umaban1, umaban2)))
 
 
 def _signed_numeric(value: pd.Series, sign: pd.Series) -> pd.Series:
@@ -406,6 +531,194 @@ def _apply_o1_market_snapshot(frame: pd.DataFrame, o1_frame: pd.DataFrame, inclu
     ]
     return result.drop(columns=["O1OddsDecimal", "O1Ninki"], errors="ignore")
 
+def _reshape_o3_wide_records(frame: pd.DataFrame) -> pd.DataFrame:
+    output_columns = RACE_KEY_COLS + [
+        "Umaban1",
+        "Umaban2",
+        "MakeDate",
+        "HappyoTime",
+        "WideOddsLowDecimal",
+        "WideOddsHighDecimal",
+        "WideOddsMeanDecimal",
+        "WideNinki",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    pair_rows = []
+    base_cols = RACE_KEY_COLS + _available_cols(frame, O3_BASE_COLS)
+    for index in range(153):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["WideKumi"] = frame.get(f"WideKumi{item_no}")
+        part["WideOddsLow"] = frame.get(f"WideOddsLow{item_no}")
+        part["WideOddsHigh"] = frame.get(f"WideOddsHigh{item_no}")
+        part["WideNinki"] = frame.get(f"WideNinki{item_no}")
+        part = part.loc[part["WideKumi"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["WideKumi"].astype("string").str.strip().ne("0000")]
+        pair_rows.append(part)
+
+    if not pair_rows:
+        return pd.DataFrame(columns=output_columns)
+
+    wide = pd.concat(pair_rows, ignore_index=True, sort=False)
+    pair_values = wide["WideKumi"].map(_parse_pair_kumi)
+    wide["Umaban1"] = [pair[0] for pair in pair_values]
+    wide["Umaban2"] = [pair[1] for pair in pair_values]
+    wide = wide.loc[wide["Umaban1"].notna() & wide["Umaban2"].notna()].copy()
+    if wide.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    wide["MakeDate"] = wide["MakeDate"].astype("string").fillna("").str.strip()
+    wide["HappyoTime"] = wide["HappyoTime"].astype("string").fillna("").str.strip()
+    wide["_SnapshotOrder"] = (
+        wide["MakeDate"].str.pad(8, side="left", fillchar="0")
+        + wide["HappyoTime"].str.pad(8, side="left", fillchar="0")
+    )
+    wide = wide.sort_values(RACE_KEY_COLS + ["Umaban1", "Umaban2", "_SnapshotOrder"], kind="stable")
+    wide = wide.drop_duplicates(RACE_KEY_COLS + ["Umaban1", "Umaban2"], keep="last").reset_index(drop=True)
+    wide["WideOddsLowDecimal"] = pd.to_numeric(wide["WideOddsLow"], errors="coerce") / 10.0
+    wide["WideOddsHighDecimal"] = pd.to_numeric(wide["WideOddsHigh"], errors="coerce") / 10.0
+    wide["WideOddsMeanDecimal"] = wide[["WideOddsLowDecimal", "WideOddsHighDecimal"]].mean(axis=1)
+    wide["WideNinki"] = pd.to_numeric(wide["WideNinki"], errors="coerce")
+    return wide[output_columns].reset_index(drop=True)
+
+
+def _reshape_o2_umaren_records(frame: pd.DataFrame) -> pd.DataFrame:
+    output_columns = RACE_KEY_COLS + [
+        "Umaban1",
+        "Umaban2",
+        "MakeDate",
+        "HappyoTime",
+        "UmarenOddsDecimal",
+        "UmarenNinki",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    pair_rows = []
+    base_cols = RACE_KEY_COLS + _available_cols(frame, O2_BASE_COLS)
+    for index in range(153):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["UmarenKumi"] = frame.get(f"UmarenKumi{item_no}")
+        part["UmarenOdds"] = frame.get(f"UmarenOdds{item_no}")
+        part["UmarenNinki"] = frame.get(f"UmarenNinki{item_no}")
+        part = part.loc[part["UmarenKumi"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["UmarenKumi"].astype("string").str.strip().ne("0000")]
+        pair_rows.append(part)
+
+    if not pair_rows:
+        return pd.DataFrame(columns=output_columns)
+
+    umaren = pd.concat(pair_rows, ignore_index=True, sort=False)
+    pair_values = umaren["UmarenKumi"].map(_parse_pair_kumi)
+    umaren["Umaban1"] = [pair[0] for pair in pair_values]
+    umaren["Umaban2"] = [pair[1] for pair in pair_values]
+    umaren = umaren.loc[umaren["Umaban1"].notna() & umaren["Umaban2"].notna()].copy()
+    if umaren.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    umaren["MakeDate"] = umaren["MakeDate"].astype("string").fillna("").str.strip()
+    umaren["HappyoTime"] = umaren["HappyoTime"].astype("string").fillna("").str.strip()
+    umaren["_SnapshotOrder"] = (
+        umaren["MakeDate"].str.pad(8, side="left", fillchar="0")
+        + umaren["HappyoTime"].str.pad(8, side="left", fillchar="0")
+    )
+    umaren = umaren.sort_values(RACE_KEY_COLS + ["Umaban1", "Umaban2", "_SnapshotOrder"], kind="stable")
+    umaren = umaren.drop_duplicates(RACE_KEY_COLS + ["Umaban1", "Umaban2"], keep="last").reset_index(drop=True)
+    umaren["UmarenOddsDecimal"] = pd.to_numeric(umaren["UmarenOdds"], errors="coerce") / 10.0
+    umaren["UmarenNinki"] = pd.to_numeric(umaren["UmarenNinki"], errors="coerce")
+    return umaren[output_columns].reset_index(drop=True)
+
+
+def _reshape_hr_pay_wide_records(frame: pd.DataFrame) -> pd.DataFrame:
+    output_columns = RACE_KEY_COLS + [
+        "Umaban1",
+        "Umaban2",
+        "WidePayoff",
+        "WidePayNinki",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    pair_rows = []
+    base_cols = RACE_KEY_COLS
+    for index in range(7):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["PayWideKumi"] = frame.get(f"PayWideKumi{item_no}")
+        part["WidePayoff"] = frame.get(f"PayWideAmount{item_no}")
+        part["WidePayNinki"] = frame.get(f"PayWideNinki{item_no}")
+        part = part.loc[part["PayWideKumi"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["PayWideKumi"].astype("string").str.strip().ne("0000")]
+        part = part.loc[part["WidePayoff"].astype("string").str.strip().fillna("").ne("")]
+        pair_rows.append(part)
+
+    if not pair_rows:
+        return pd.DataFrame(columns=output_columns)
+
+    wide = pd.concat(pair_rows, ignore_index=True, sort=False)
+    pair_values = wide["PayWideKumi"].map(_parse_pair_kumi)
+    wide["Umaban1"] = [pair[0] for pair in pair_values]
+    wide["Umaban2"] = [pair[1] for pair in pair_values]
+    wide = wide.loc[wide["Umaban1"].notna() & wide["Umaban2"].notna()].copy()
+    if wide.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    wide["WidePayoff"] = pd.to_numeric(wide["WidePayoff"], errors="coerce")
+    wide["WidePayNinki"] = pd.to_numeric(wide["WidePayNinki"], errors="coerce")
+    wide = wide.loc[wide["WidePayoff"].fillna(0).gt(0)].copy()
+    if wide.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    wide = _deduplicate_by_key(wide, RACE_KEY_COLS + ["Umaban1", "Umaban2"], "HR wide payout")
+    return wide[output_columns].reset_index(drop=True)
+
+
+def _reshape_hr_pay_umaren_records(frame: pd.DataFrame) -> pd.DataFrame:
+    output_columns = RACE_KEY_COLS + [
+        "Umaban1",
+        "Umaban2",
+        "UmarenPayoff",
+        "UmarenPayNinki",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    pair_rows = []
+    base_cols = RACE_KEY_COLS
+    for index in range(3):
+        item_no = index + 1
+        part = frame[base_cols].copy()
+        part["PayUmarenKumi"] = frame.get(f"PayUmarenKumi{item_no}")
+        part["UmarenPayoff"] = frame.get(f"PayUmarenAmount{item_no}")
+        part["UmarenPayNinki"] = frame.get(f"PayUmarenNinki{item_no}")
+        part = part.loc[part["PayUmarenKumi"].astype("string").str.strip().fillna("").ne("")]
+        part = part.loc[part["PayUmarenKumi"].astype("string").str.strip().ne("0000")]
+        part = part.loc[part["UmarenPayoff"].astype("string").str.strip().fillna("").ne("")]
+        pair_rows.append(part)
+
+    if not pair_rows:
+        return pd.DataFrame(columns=output_columns)
+
+    umaren = pd.concat(pair_rows, ignore_index=True, sort=False)
+    pair_values = umaren["PayUmarenKumi"].map(_parse_pair_kumi)
+    umaren["Umaban1"] = [pair[0] for pair in pair_values]
+    umaren["Umaban2"] = [pair[1] for pair in pair_values]
+    umaren = umaren.loc[umaren["Umaban1"].notna() & umaren["Umaban2"].notna()].copy()
+    if umaren.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    umaren["UmarenPayoff"] = pd.to_numeric(umaren["UmarenPayoff"], errors="coerce")
+    umaren["UmarenPayNinki"] = pd.to_numeric(umaren["UmarenPayNinki"], errors="coerce")
+    umaren = umaren.loc[umaren["UmarenPayoff"].fillna(0).gt(0)].copy()
+    if umaren.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    umaren = _deduplicate_by_key(umaren, RACE_KEY_COLS + ["Umaban1", "Umaban2"], "HR umaren payout")
+    return umaren[output_columns].reset_index(drop=True)
+
 
 def _prepare_workout_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     if frame.empty:
@@ -455,12 +768,15 @@ def _merge_workout_features(
             valid[field] = pd.to_numeric(valid[field], errors="coerce")
     valid = valid.sort_values(["_HorseHistoryKey", "WorkoutDate", "_WorkoutOrder"], kind="stable").reset_index(drop=True)
 
-    grouped_workouts = {key: grp.reset_index(drop=True) for key, grp in valid.groupby("_HorseHistoryKey", sort=False)}
-    race_groups = result.loc[result["_HorseHistoryKey"].notna() & result["RaceDate"].notna()].groupby("_HorseHistoryKey", sort=False)
+    race_indexers = (
+        result.loc[result["_HorseHistoryKey"].notna() & result["RaceDate"].notna()]
+        .groupby("_HorseHistoryKey", sort=False)
+        .groups
+    )
 
-    for horse_key, indexer in race_groups.groups.items():
-        workouts_for_horse = grouped_workouts.get(horse_key)
-        if workouts_for_horse is None or workouts_for_horse.empty:
+    for horse_key, workouts_for_horse in valid.groupby("_HorseHistoryKey", sort=False):
+        indexer = race_indexers.get(horse_key)
+        if indexer is None or workouts_for_horse.empty:
             continue
 
         race_rows = result.loc[indexer].sort_values("RaceDate")
@@ -582,6 +898,19 @@ def _deduplicate_by_key(frame: pd.DataFrame, key_cols: list[str], label: str) ->
         .drop(columns=["_source_order", "_completeness"])
         .reset_index(drop=True)
     )
+
+
+def _raw_files_for_specs(raw_path: Path, record_specs: set[str] | None = None) -> list[str]:
+    if not record_specs:
+        return sorted(glob.glob(str(raw_path / "*.txt")))
+
+    matched_files: set[str] = set()
+    for spec in record_specs:
+        for prefix in RAW_FILE_PREFIXES_BY_SPEC.get(spec, [f"{spec}_"]):
+            matched_files.update(glob.glob(str(raw_path / f"{prefix}*.txt")))
+    if matched_files:
+        return sorted(matched_files)
+    return sorted(glob.glob(str(raw_path / "*.txt")))
 
 
 def _merge_history_features(
@@ -1177,11 +1506,11 @@ def _feature_column_names(
     return feature_cols
 
 
-def _load_raw_records(raw_path: Path) -> pd.DataFrame:
-    parser = JVParser()
+def _load_raw_records(raw_path: Path, record_specs: set[str] | None = None) -> pd.DataFrame:
+    parser = JVParser(enabled_specs=record_specs)
     all_data = []
 
-    files = sorted(glob.glob(str(raw_path / "*.txt")))
+    files = _raw_files_for_specs(raw_path, record_specs=record_specs)
     if not files:
         print("No raw data files found.")
         return pd.DataFrame()
@@ -1206,6 +1535,45 @@ def _load_raw_records(raw_path: Path) -> pd.DataFrame:
     return full_df
 
 
+def _load_raw_record_groups(
+    raw_path: Path,
+    record_specs: set[str],
+    selected_fields_by_spec: dict[str, list[str]] | None = None,
+) -> dict[str, pd.DataFrame]:
+    parser = JVParser(enabled_specs=record_specs, selected_fields_by_spec=selected_fields_by_spec)
+    grouped_columns: dict[str, dict[str, list[str | None]]] = {}
+    for spec in record_specs:
+        selected_fields = None if parser.selected_fields_by_spec is None else parser.selected_fields_by_spec.get(spec)
+        columns = list(parser.schemas[spec].keys()) if selected_fields is None else list(selected_fields)
+        grouped_columns[spec] = {column: [] for column in columns}
+
+    files = _raw_files_for_specs(raw_path, record_specs=record_specs)
+    if not files:
+        print("No raw data files found.")
+        return {spec: pd.DataFrame() for spec in record_specs}
+
+    print(f"Found {len(files)} files.")
+
+    for index, fpath in enumerate(files, start=1):
+        if len(files) <= 20 or index == 1 or index == len(files) or index % 50 == 0:
+            print(f"Parsing {index}/{len(files)}: {fpath}...")
+        for parsed in parser.iter_file_records(fpath):
+            spec = parsed["RecordSpec"]
+            column_store = grouped_columns[spec]
+            for column in column_store:
+                column_store[column].append(parsed.get(column))
+
+    result: dict[str, pd.DataFrame] = {}
+    for spec in record_specs:
+        frame = pd.DataFrame(grouped_columns[spec])
+        exact_duplicates = int(frame.duplicated().sum()) if not frame.empty else 0
+        if exact_duplicates:
+            print(f"Removed {exact_duplicates} exact duplicate raw row(s) for {spec}.")
+            frame = frame.drop_duplicates().reset_index(drop=True)
+        result[spec] = frame
+    return result
+
+
 def build_feature_frame(
     raw_dir=DEFAULT_RAW_DIR,
     include_o1: bool = False,
@@ -1214,17 +1582,23 @@ def build_feature_frame(
     include_wc: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     raw_path = Path(raw_dir)
-    full_df = _load_raw_records(raw_path)
     feature_cols = _feature_column_names(include_wh, include_hc, include_wc)
-    if full_df.empty:
+    record_fields = _feature_build_record_fields(
+        include_o1=include_o1,
+        include_wh=include_wh,
+        include_hc=include_hc,
+        include_wc=include_wc,
+    )
+    record_groups = _load_raw_record_groups(raw_path, set(record_fields), selected_fields_by_spec=record_fields)
+    df_ra = record_groups["RA"]
+    df_se = record_groups["SE"]
+    if df_ra.empty or df_se.empty:
         return pd.DataFrame(), feature_cols
 
-    df_ra = full_df[full_df["RecordSpec"] == "RA"].copy()
-    df_se = full_df[full_df["RecordSpec"] == "SE"].copy()
-    df_o1 = full_df[full_df["RecordSpec"] == "O1"].copy()
-    df_wh = full_df[full_df["RecordSpec"] == "WH"].copy()
-    df_hc = full_df[full_df["RecordSpec"] == "HC"].copy()
-    df_wc = full_df[full_df["RecordSpec"] == "WC"].copy()
+    df_o1 = record_groups.get("O1", pd.DataFrame())
+    df_wh = record_groups.get("WH", pd.DataFrame())
+    df_hc = record_groups.get("HC", pd.DataFrame())
+    df_wc = record_groups.get("WC", pd.DataFrame())
 
     print(f"RA records: {len(df_ra)}, SE records: {len(df_se)}")
     if include_o1 or include_wh or include_hc or include_wc:
@@ -1261,7 +1635,7 @@ def build_feature_frame(
         merged.loc[merged["ZogenFugo"] == "-", "ZogenSa"] *= -1
 
     merged["OddsDecimal"] = merged["Odds"] / 10.0
-    merged["HasResult"] = merged["KakuteiJyuni"].notna()
+    merged["HasResult"] = pd.to_numeric(merged["KakuteiJyuni"], errors="coerce").fillna(0).gt(0)
     merged["TargetTop3"] = pd.Series(pd.NA, index=merged.index, dtype="Int64")
     merged["TargetWin"] = pd.Series(pd.NA, index=merged.index, dtype="Int64")
     merged.loc[merged["HasResult"], "TargetTop3"] = (
@@ -1286,12 +1660,170 @@ def build_feature_frame(
     merged = _add_external_features(merged, df_wh, df_hc, df_wc, include_wh, include_hc, include_wc)
     merged = _add_historical_features(merged)
 
-    keep_cols = OUTPUT_BASE_COLS + feature_cols
+    keep_cols = _unique_preserve_order(OUTPUT_BASE_COLS + feature_cols + POLICY_ONLY_COLS)
     keep_cols = [col for col in keep_cols if col in merged.columns]
     final_df = merged[keep_cols]
     final_df = _deduplicate_by_key(final_df, ["RaceKey", "Umaban", "KettoNum"], "final dataset")
     final_df = final_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
     return final_df, feature_cols
+
+
+def build_wide_pair_label_frame(raw_dir=DEFAULT_RAW_DIR) -> pd.DataFrame:
+    raw_path = Path(raw_dir)
+    record_groups = _load_raw_record_groups(
+        raw_path,
+        {"RA", "O3", "HR"},
+        selected_fields_by_spec={
+            "RA": _unique_preserve_order(RACE_KEY_COLS),
+            "O3": _o3_record_fields(),
+            "HR": _hr_record_fields(include_wide=True),
+        },
+    )
+    df_ra = record_groups["RA"]
+    df_o3 = record_groups["O3"]
+    df_hr = record_groups["HR"]
+    output_columns = [
+        "RaceKey",
+        "RaceDate",
+        "Umaban1",
+        "Umaban2",
+        "WideOddsLowDecimal",
+        "WideOddsHighDecimal",
+        "WideOddsMeanDecimal",
+        "WideNinki",
+        "WidePayoff",
+        "WidePayNinki",
+        "WideHit",
+        "WideNetReturn",
+        "WideGrossReturn",
+    ]
+    if df_o3.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    race_frame = df_ra[RACE_KEY_COLS].copy() if not df_ra.empty else df_o3[RACE_KEY_COLS].copy()
+    race_frame = _deduplicate_by_key(race_frame, RACE_KEY_COLS, "RA for wide pairs")
+    race_frame["RaceDate"] = pd.to_datetime(
+        race_frame["Year"].fillna("") + race_frame["MonthDay"].fillna(""),
+        format="%Y%m%d",
+        errors="coerce",
+    )
+    race_frame["RaceKey"] = (
+        race_frame["Year"].fillna("")
+        + race_frame["MonthDay"].fillna("")
+        + race_frame["JyoCD"].fillna("")
+        + race_frame["Kaiji"].fillna("")
+        + race_frame["Nichiji"].fillna("")
+        + race_frame["RaceNum"].fillna("")
+    )
+
+    o3_wide = _reshape_o3_wide_records(df_o3)
+    hr_wide = _reshape_hr_pay_wide_records(df_hr)
+    if o3_wide.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    merged = o3_wide.merge(
+        hr_wide,
+        on=RACE_KEY_COLS + ["Umaban1", "Umaban2"],
+        how="left",
+    )
+    merged = merged.merge(
+        race_frame[RACE_KEY_COLS + ["RaceKey", "RaceDate"]],
+        on=RACE_KEY_COLS,
+        how="left",
+    )
+    merged["WidePayoff"] = pd.to_numeric(merged["WidePayoff"], errors="coerce").fillna(0.0)
+    merged["WidePayNinki"] = pd.to_numeric(merged["WidePayNinki"], errors="coerce")
+    merged["WideHit"] = merged["WidePayoff"].gt(0).astype(int)
+    merged["WideGrossReturn"] = np.where(merged["WideHit"].eq(1), merged["WidePayoff"], 0.0)
+    merged["WideNetReturn"] = np.where(merged["WideHit"].eq(1), merged["WidePayoff"] - 100.0, -100.0)
+    merged["RaceKey"] = (
+        merged["Year"].fillna("")
+        + merged["MonthDay"].fillna("")
+        + merged["JyoCD"].fillna("")
+        + merged["Kaiji"].fillna("")
+        + merged["Nichiji"].fillna("")
+        + merged["RaceNum"].fillna("")
+    )
+    merged = merged.sort_values(["RaceDate", "RaceKey", "Umaban1", "Umaban2"]).reset_index(drop=True)
+    return merged[output_columns]
+
+
+def build_umaren_pair_label_frame(raw_dir=DEFAULT_RAW_DIR) -> pd.DataFrame:
+    raw_path = Path(raw_dir)
+    record_groups = _load_raw_record_groups(
+        raw_path,
+        {"RA", "O2", "HR"},
+        selected_fields_by_spec={
+            "RA": _unique_preserve_order(RACE_KEY_COLS),
+            "O2": _o2_record_fields(),
+            "HR": _hr_record_fields(include_umaren=True),
+        },
+    )
+    df_ra = record_groups["RA"]
+    df_o2 = record_groups["O2"]
+    df_hr = record_groups["HR"]
+    output_columns = [
+        "RaceKey",
+        "RaceDate",
+        "Umaban1",
+        "Umaban2",
+        "UmarenOddsDecimal",
+        "UmarenNinki",
+        "UmarenPayoff",
+        "UmarenPayNinki",
+        "UmarenHit",
+        "UmarenNetReturn",
+        "UmarenGrossReturn",
+    ]
+    if df_o2.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    race_frame = df_ra[RACE_KEY_COLS].copy() if not df_ra.empty else df_o2[RACE_KEY_COLS].copy()
+    race_frame = _deduplicate_by_key(race_frame, RACE_KEY_COLS, "RA for umaren pairs")
+    race_frame["RaceDate"] = pd.to_datetime(
+        race_frame["Year"].fillna("") + race_frame["MonthDay"].fillna(""),
+        format="%Y%m%d",
+        errors="coerce",
+    )
+    race_frame["RaceKey"] = (
+        race_frame["Year"].fillna("")
+        + race_frame["MonthDay"].fillna("")
+        + race_frame["JyoCD"].fillna("")
+        + race_frame["Kaiji"].fillna("")
+        + race_frame["Nichiji"].fillna("")
+        + race_frame["RaceNum"].fillna("")
+    )
+
+    o2_umaren = _reshape_o2_umaren_records(df_o2)
+    hr_umaren = _reshape_hr_pay_umaren_records(df_hr)
+    if o2_umaren.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    merged = o2_umaren.merge(
+        hr_umaren,
+        on=RACE_KEY_COLS + ["Umaban1", "Umaban2"],
+        how="left",
+    )
+    merged = merged.merge(
+        race_frame[RACE_KEY_COLS + ["RaceKey", "RaceDate"]],
+        on=RACE_KEY_COLS,
+        how="left",
+    )
+    merged["UmarenPayoff"] = pd.to_numeric(merged["UmarenPayoff"], errors="coerce").fillna(0.0)
+    merged["UmarenPayNinki"] = pd.to_numeric(merged["UmarenPayNinki"], errors="coerce")
+    merged["UmarenHit"] = merged["UmarenPayoff"].gt(0).astype(int)
+    merged["UmarenGrossReturn"] = np.where(merged["UmarenHit"].eq(1), merged["UmarenPayoff"], 0.0)
+    merged["UmarenNetReturn"] = np.where(merged["UmarenHit"].eq(1), merged["UmarenPayoff"] - 100.0, -100.0)
+    merged["RaceKey"] = (
+        merged["Year"].fillna("")
+        + merged["MonthDay"].fillna("")
+        + merged["JyoCD"].fillna("")
+        + merged["Kaiji"].fillna("")
+        + merged["Nichiji"].fillna("")
+        + merged["RaceNum"].fillna("")
+    )
+    merged = merged.sort_values(["RaceDate", "RaceKey", "Umaban1", "Umaban2"]).reset_index(drop=True)
+    return merged[output_columns]
 
 
 def make_dataset(
@@ -1358,7 +1890,7 @@ def make_prediction_dataset(
         print("No pending races matched the requested filters.")
         return
 
-    prediction_df = prediction_df.dropna(subset=["RaceDate"] + feature_cols)
+    prediction_df = prediction_df.dropna(subset=["RaceDate", "RaceKey", "Umaban"])
     prediction_df = prediction_df.drop(columns=["HasResult", "KakuteiJyuni", "TargetTop3", "TargetWin"], errors="ignore")
     prediction_df = prediction_df.sort_values(["RaceDate", "RaceKey", "Umaban"]).reset_index(drop=True)
 

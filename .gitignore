@@ -1,14 +1,26 @@
 .venv/
+venv/
+.env
+.env.*
+!.env.example
 __pycache__/
 *.py[cod]
 
 data/raw/
 data/processed/
+data/archive/
+data/packages/
+data/raceday/
+data/locks/
+data/env/race-day.env
 
 *.ipynb
 .ipynb_checkpoints/
 
-docs/
+docs/*
+!docs/project-documents.md
+!docs/weekend-operations-flow.md
+!docs/mini-pc-raceday-automation.md
 doc/
 
 References/
