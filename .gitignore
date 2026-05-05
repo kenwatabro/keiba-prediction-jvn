@@ -10,6 +10,9 @@ data/raw/
 data/processed/
 data/archive/
 data/packages/
+data/raceday/
+data/locks/
+data/env/race-day.env
 
 *.ipynb
 .ipynb_checkpoints/

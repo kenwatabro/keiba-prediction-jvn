@@ -57,7 +57,7 @@ For each race:
 - Start checking around `HassoTime - 60 minutes`.
 - Retry every 3 to 5 minutes while body weight coverage is incomplete.
 - Treat the race as prediction-ready when all expected runners have `NetkeibaWeightAvailable = 1`.
-- If coverage is still incomplete by `HassoTime - 25 minutes`, run one final prediction with the available data and include the missing coverage in the Discord message.
+- If coverage is still incomplete by around `HassoTime - 20 minutes`, run one final prediction with the available data and include the missing coverage in the Discord message.
 - Never fetch the same race repeatedly after a successful final prediction.
 
 This avoids hitting netkeiba continuously while still catching the useful window soon after body weights appear.
@@ -65,11 +65,11 @@ This avoids hitting netkeiba continuously while still catching the useful window
 At morning startup, the runner should build the full daily schedule and print/log a table like:
 
 ```text
-2026-05-02 東京 1R 10:05 RaceKey=2026050205010101 runners=16 first_due=09:05 deadline=09:40
-2026-05-02 京都 1R 10:10 RaceKey=2026050208010101 runners=14 first_due=09:10 deadline=09:45
+2026-05-02 東京 1R 10:05 RaceKey=2026050205010101 runners=16 first_due=09:05 deadline=09:45
+2026-05-02 京都 1R 10:10 RaceKey=2026050208010101 runners=14 first_due=09:10 deadline=09:50
 ```
 
-If the package has no races for today, the runner exits successfully.
+If the package has no races for today, the runner sends one operational Discord alert and exits successfully.
 
 ## State File
 
@@ -246,6 +246,18 @@ These should update state, retry until the deadline, and include the final reaso
 4. Parse the generated `prediction_monitor_*.json` to decide complete vs partial.
 5. Add tests for timing decisions and duplicate-notification prevention.
 6. Add sample `systemd` unit files under `deploy/systemd/`.
+
+Implemented entry point:
+
+```bash
+python scripts/race_day_runner.py \
+  --prediction-date 2026-05-02 \
+  --package-dir /home/USER/keiba/runs/weekend_20260501 \
+  --output-root /home/USER/keiba/runs \
+  --notify-discord
+```
+
+For a smoke test without sleeping, add `--once`. During retry loops, the runner calls the prediction command without Discord notification, reads the monitor JSON, and only sends a notification when the race is complete or the deadline has been reached.
 
 ## Important Boundary
 
