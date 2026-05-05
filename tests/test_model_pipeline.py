@@ -25,6 +25,7 @@ from temporal_evaluate import (  # noqa: E402
     summarize_selective_policy,
 )
 from trainer import (  # noqa: E402
+    build_explanation_metadata,
     build_feature_metadata_path,
     cast_categoricals,
     filter_by_date_range,
@@ -122,6 +123,35 @@ def build_ranking_training_dataframe() -> pd.DataFrame:
 
 
 class ModelPipelineTests(unittest.TestCase):
+    def test_explanation_metadata_includes_priority_display_names(self):
+        priority_columns = [
+            "NyusenTosu",
+            "TorokuTosu",
+            "SyussoTosu",
+            "HorseAvgFinishPctBefore",
+            "HorseLast3AvgFinishPct",
+            "HorseLast1FinishPct",
+            "HorseLast3Top3Rate",
+            "HorseLast3BestFinish",
+            "HorseStartsBefore",
+            "OwnerTop3RateSmoothBefore",
+            "BaTaijyu",
+            "ZogenSa",
+            "JyoCD",
+            "MinaraiCD",
+            "TozaiCD",
+        ]
+
+        explanation = build_explanation_metadata(priority_columns)
+
+        display_names = explanation["feature_display_names"]
+        for column in priority_columns:
+            self.assertIn(column, display_names)
+            self.assertNotEqual(display_names[column], column)
+        self.assertEqual(display_names["NyusenTosu"], "入線頭数")
+        self.assertEqual(display_names["HorseLast3AvgFinishPct"], "馬_近3走平均着順率")
+        self.assertEqual(display_names["OwnerTop3RateSmoothBefore"], "馬主_補正複勝率")
+
     def test_training_and_prediction_create_expected_artifacts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

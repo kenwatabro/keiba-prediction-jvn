@@ -173,8 +173,25 @@ class WeekendPackageTests(unittest.TestCase):
             temp_root = Path(temp_dir)
             args = build_args(temp_root)
             legacy_features = Path(args.features_source)
+            prediction_source = Path(args.prediction_base_source)
+            prediction_df = pd.read_csv(prediction_source)
+            prediction_df["NyusenTosu"] = 12
+            prediction_df["HorseLast3AvgFinishPct"] = 0.42
+            prediction_df["OwnerTop3RateSmoothBefore"] = 0.31
+            prediction_df.to_csv(prediction_source, index=False)
             legacy_features.write_text(
-                json.dumps({"feature_columns": ["FeatureA", "FeatureB"], "target_column": "TargetWin"}),
+                json.dumps(
+                    {
+                        "feature_columns": [
+                            "FeatureA",
+                            "FeatureB",
+                            "NyusenTosu",
+                            "HorseLast3AvgFinishPct",
+                            "OwnerTop3RateSmoothBefore",
+                        ],
+                        "target_column": "TargetWin",
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -182,9 +199,27 @@ class WeekendPackageTests(unittest.TestCase):
 
             features = json.loads((package_dir / "features.json").read_text(encoding="utf-8"))
             model_features = json.loads((package_dir / "model.features.json").read_text(encoding="utf-8"))
-            self.assertEqual(features["feature_columns"], ["FeatureA", "FeatureB"])
+            self.assertEqual(
+                features["feature_columns"],
+                [
+                    "FeatureA",
+                    "FeatureB",
+                    "NyusenTosu",
+                    "HorseLast3AvgFinishPct",
+                    "OwnerTop3RateSmoothBefore",
+                ],
+            )
             self.assertEqual(features["explanation"]["method"], "lightgbm_pred_contrib")
             self.assertEqual(features["explanation"]["score_space"], "raw_margin")
+            self.assertEqual(features["explanation"]["feature_display_names"]["NyusenTosu"], "入線頭数")
+            self.assertEqual(
+                features["explanation"]["feature_display_names"]["HorseLast3AvgFinishPct"],
+                "馬_近3走平均着順率",
+            )
+            self.assertEqual(
+                features["explanation"]["feature_display_names"]["OwnerTop3RateSmoothBefore"],
+                "馬主_補正複勝率",
+            )
             self.assertEqual(model_features, features)
 
     def test_prediction_base_cache_can_rebuild_existing_package_target(self):
