@@ -1,0 +1,11 @@
+[Unit]
+Description=Start JRA race-day automation in the morning
+
+[Timer]
+OnCalendar=Sat,Sun *-*-* 08:00:00
+Persistent=true
+Unit=jra-raceday-runner.service
+
+[Install]
+WantedBy=timers.target
+

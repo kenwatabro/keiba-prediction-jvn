@@ -1,9 +1,18 @@
+from collections.abc import Iterable
+
 import pandas as pd
 
+
 class JVParser:
-    def __init__(self):
+    def __init__(
+        self,
+        enabled_specs: Iterable[str] | None = None,
+        selected_fields_by_spec: dict[str, Iterable[str]] | None = None,
+    ):
         # Offsets are taken from the bundled official VB sample structures.
         # VB uses 1-based byte offsets, so they are converted to 0-based here.
+        self.enabled_specs = {spec.upper() for spec in enabled_specs} if enabled_specs is not None else None
+
         wh_schema = {
             "RecordSpec": (0, 2),
             "DataKubun": (2, 1),
@@ -24,6 +33,102 @@ class JVParser:
             wh_schema[f"BaTaijyu{item_no}"] = (start + 38, 3)
             wh_schema[f"ZogenFugo{item_no}"] = (start + 41, 1)
             wh_schema[f"ZogenSa{item_no}"] = (start + 42, 3)
+
+        o1_schema = {
+            "RecordSpec": (0, 2),
+            "DataKubun": (2, 1),
+            "MakeDate": (3, 8),
+            "Year": (11, 4),
+            "MonthDay": (15, 4),
+            "JyoCD": (19, 2),
+            "Kaiji": (21, 2),
+            "Nichiji": (23, 2),
+            "RaceNum": (25, 2),
+            "HappyoTime": (27, 8),
+            "TorokuTosu": (35, 2),
+            "SyussoTosu": (37, 2),
+            "TansyoFlag": (39, 1),
+            "FukusyoFlag": (40, 1),
+            "WakurenFlag": (41, 1),
+            "FukuChakuBaraiKey": (42, 1),
+        }
+        for index in range(28):
+            start = 43 + 8 * index
+            item_no = index + 1
+            o1_schema[f"Umaban{item_no}"] = (start, 2)
+            o1_schema[f"Odds{item_no}"] = (start + 2, 4)
+            o1_schema[f"Ninki{item_no}"] = (start + 6, 2)
+
+        o2_schema = {
+            "RecordSpec": (0, 2),
+            "DataKubun": (2, 1),
+            "MakeDate": (3, 8),
+            "Year": (11, 4),
+            "MonthDay": (15, 4),
+            "JyoCD": (19, 2),
+            "Kaiji": (21, 2),
+            "Nichiji": (23, 2),
+            "RaceNum": (25, 2),
+            "HappyoTime": (27, 8),
+            "TorokuTosu": (35, 2),
+            "SyussoTosu": (37, 2),
+            "UmarenFlag": (39, 1),
+        }
+        for index in range(153):
+            start = 40 + 13 * index
+            item_no = index + 1
+            o2_schema[f"UmarenKumi{item_no}"] = (start, 4)
+            o2_schema[f"UmarenOdds{item_no}"] = (start + 4, 6)
+            o2_schema[f"UmarenNinki{item_no}"] = (start + 10, 3)
+
+        o3_schema = {
+            "RecordSpec": (0, 2),
+            "DataKubun": (2, 1),
+            "MakeDate": (3, 8),
+            "Year": (11, 4),
+            "MonthDay": (15, 4),
+            "JyoCD": (19, 2),
+            "Kaiji": (21, 2),
+            "Nichiji": (23, 2),
+            "RaceNum": (25, 2),
+            "HappyoTime": (27, 8),
+            "TorokuTosu": (35, 2),
+            "SyussoTosu": (37, 2),
+            "WideFlag": (39, 1),
+        }
+        for index in range(153):
+            start = 40 + 17 * index
+            item_no = index + 1
+            o3_schema[f"WideKumi{item_no}"] = (start, 4)
+            o3_schema[f"WideOddsLow{item_no}"] = (start + 4, 5)
+            o3_schema[f"WideOddsHigh{item_no}"] = (start + 9, 5)
+            o3_schema[f"WideNinki{item_no}"] = (start + 14, 3)
+
+        hr_schema = {
+            "RecordSpec": (0, 2),
+            "DataKubun": (2, 1),
+            "MakeDate": (3, 8),
+            "Year": (11, 4),
+            "MonthDay": (15, 4),
+            "JyoCD": (19, 2),
+            "Kaiji": (21, 2),
+            "Nichiji": (23, 2),
+            "RaceNum": (25, 2),
+            "TorokuTosu": (27, 2),
+            "SyussoTosu": (29, 2),
+        }
+        for index in range(7):
+            start = 293 + 16 * index
+            item_no = index + 1
+            hr_schema[f"PayWideKumi{item_no}"] = (start, 4)
+            hr_schema[f"PayWideAmount{item_no}"] = (start + 4, 9)
+            hr_schema[f"PayWideNinki{item_no}"] = (start + 13, 3)
+        for index in range(3):
+            start = 245 + 16 * index
+            item_no = index + 1
+            hr_schema[f"PayUmarenKumi{item_no}"] = (start, 4)
+            hr_schema[f"PayUmarenAmount{item_no}"] = (start + 4, 9)
+            hr_schema[f"PayUmarenNinki{item_no}"] = (start + 13, 3)
 
         self.schemas = {
             "RA": {
@@ -112,7 +217,12 @@ class JVParser:
                 "HaronTimeL4": (387, 3),
                 "HaronTimeL3": (390, 3),
                 "TimeDiff": (531, 4),
+                "KyakusituKubun": (552, 1),
             },
+            "O1": o1_schema,
+            "O2": o2_schema,
+            "O3": o3_schema,
+            "HR": hr_schema,
             "WH": wh_schema,
             "HC": {
                 "RecordSpec": (0, 2),
@@ -161,43 +271,59 @@ class JVParser:
                 "LapTime1": (100, 3),
             },
         }
+        self.selected_fields_by_spec: dict[str, tuple[str, ...]] | None = None
+        if selected_fields_by_spec is not None:
+            normalized_fields: dict[str, tuple[str, ...]] = {}
+            for spec, fields in selected_fields_by_spec.items():
+                spec_name = spec.upper()
+                schema = self.schemas.get(spec_name)
+                if schema is None:
+                    continue
 
-    def parse_line(self, line_bytes):
-        """
-        Parses a single line (bytes) based on its RecordSpec.
-        """
-        record_spec = line_bytes[0:2].decode('cp932', errors='ignore')
-        
-        if record_spec not in self.schemas:
+                selected_fields = ["RecordSpec"]
+                for field in fields:
+                    field_name = str(field)
+                    if field_name in schema and field_name not in selected_fields:
+                        selected_fields.append(field_name)
+                normalized_fields[spec_name] = tuple(selected_fields)
+            self.selected_fields_by_spec = normalized_fields
+
+    def parse_line(self, line_bytes: bytes) -> dict[str, str | None] | None:
+        """Parse a single fixed-width JV-Link record."""
+        record_spec = line_bytes[0:2].decode("cp932", errors="ignore").strip().upper()
+        if not record_spec:
             return None
-            
-        schema = self.schemas[record_spec]
-        data = {}
-        
-        for field, (start, length) in schema.items():
-            chunk = line_bytes[start:start+length]
+        if self.enabled_specs is not None and record_spec not in self.enabled_specs:
+            return None
+
+        schema = self.schemas.get(record_spec)
+        if schema is None:
+            return None
+
+        data: dict[str, str | None] = {}
+        selected_fields = None if self.selected_fields_by_spec is None else self.selected_fields_by_spec.get(record_spec)
+        fields_to_parse = schema.keys() if selected_fields is None else selected_fields
+        for field in fields_to_parse:
+            start, length = schema[field]
+            chunk = line_bytes[start:start + length]
             try:
-                val = chunk.decode('cp932', errors='ignore').strip()
-                data[field] = val
+                data[field] = chunk.decode("cp932", errors="ignore").strip()
             except Exception:
                 data[field] = None
-
         return data
 
-    def parse_file(self, filepath):
-        """
-        Parses a file and returns a DataFrame.
-        """
-        records = []
-        with open(filepath, 'rb') as f:
-            for line in f:
-                line = line.rstrip(b'\r\n')
+    def iter_file_records(self, filepath):
+        """Yield parsed JV-Link records from a raw text file."""
+        with open(filepath, "rb") as handle:
+            for line in handle:
+                line = line.rstrip(b"\r\n")
                 if not line:
                     continue
 
                 parsed = self.parse_line(line)
-                if parsed:
-                    records.append(parsed)
+                if parsed is not None:
+                    yield parsed
 
-        return pd.DataFrame(records)
-
+    def parse_file(self, filepath) -> pd.DataFrame:
+        """Parse a raw JV-Link text file into a DataFrame."""
+        return pd.DataFrame(self.iter_file_records(filepath))

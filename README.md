@@ -3,6 +3,7 @@
 This system uses JRA-VAN Data Lab to fetch horse racing data and Machine Learning (LightGBM) to predict race outcomes.
 
 ## Development Memo
+- Execution plan: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - Project docs index: [docs/project-documents.md](docs/project-documents.md)
 - System overview: [docs/system-overview.md](docs/system-overview.md)
 - Requirements: [docs/requirements-definition.md](docs/requirements-definition.md)
@@ -14,6 +15,8 @@ This system uses JRA-VAN Data Lab to fetch horse racing data and Machine Learnin
 - Glossary: [docs/glossary.md](docs/glossary.md)
 - Future data model: [docs/future-data-model.md](docs/future-data-model.md)
 - JV-Link expansion roadmap: [docs/jvlink-expansion-roadmap.md](docs/jvlink-expansion-roadmap.md)
+- Weekend operations flow: [docs/weekend-operations-flow.md](docs/weekend-operations-flow.md)
+- Mini PC race-day automation: [docs/mini-pc-raceday-automation.md](docs/mini-pc-raceday-automation.md)
 - Environment notes: [docs/development-environment.md](docs/development-environment.md)
 - Windows fetch notes: [docs/windows-fetch-setup.md](docs/windows-fetch-setup.md)
 
@@ -74,6 +77,7 @@ Confirmed expanded fetch patterns:
 
 - historical race/result backfill: `--spec RACE --option 3`
 - race-day body-weight bulletin: `--spec WH --option 2` on a single target date
+- race-day single-win odds snapshot: `--spec O1 --rt-key <RaceKey>` via realtime `JVRTOpen`
 - hanro workout history: `--spec SLOP --option 3`
 - wood-chip workout history: `--spec WOOD --option 3`
 
@@ -81,9 +85,44 @@ Examples:
 
 ```powershell
 python fetch_raw_data.py --start 20260314 --end 20260314 --spec WH --option 2 --out D:\jra-van-raw --save-path D:\JVLinkData
+python fetch_raw_data.py --start 20260314 --end 20260314 --spec O1 --rt-key 2026031406010111 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20140101 --end 20260310 --spec SLOP --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 python fetch_raw_data.py --start 20210101 --end 20260310 --spec WOOD --option 3 --out D:\jra-van-raw --save-path D:\JVLinkData
 ```
+
+Suggested semi-automatic operation:
+
+- `RACE`, `SLOP`, `WOOD` are the daily historical bundle.
+- `WH` is race-day only and should be fetched on the same day, not backfilled later.
+- Use the Windows wrapper scripts under `scripts/windows/` with Task Scheduler.
+
+Examples:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_daily_bundle.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_wh.ps1 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\fetch_raceday_o1.ps1 -RaceKey 2026031406010111 -OutputDir D:\jra-van-raw -SavePath D:\JVLinkData
+```
+
+If a Windows fetch fails with a pywin32 `gen_py` / `CLSIDToClassMap` / `CLSIDToPackageMap` error, repair the local pywin32 cache once and retry:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\repair_pywin32_gen_py.ps1
+```
+
+The Windows wrapper scripts also set `JVLINK_FORCE_DYNAMIC_DISPATCH=1` before calling Python so broken generated COM wrappers are bypassed by default.
+
+Recommended schedule:
+
+- once every evening after racing: `fetch_daily_bundle.ps1`
+- on race days only, several times during the day: `fetch_raceday_wh.ps1`
+
+The practical architecture is:
+
+- Windows machine: fetch with `JV-Link`
+- Ubuntu/WSL machine: sync exported `.txt` files, build datasets, train/evaluate models
+
+`JV-Link` fetch itself must run on Windows directly. A Linux or Ubuntu machine can still be useful as the downstream training/evaluation box, but it cannot call `JV-Link` natively.
 
 ```bash
 ./scripts/sync_raw_from_windows.sh /mnt/c/path/to/jra-van-data/raw data/raw
@@ -99,6 +138,7 @@ The dataset builder now removes exact duplicate raw rows, deduplicates duplicate
 If `WH` body-weight bulletin data or `HC` / `WC` workout data has also been fetched into `data/raw/`, an alternate race-day dataset can be built explicitly:
 ```bash
 ./.venv/bin/python src/preprocessing/make_dataset.py \
+  --include-o1 \
   --include-wh \
   --include-hc \
   --include-wc \
@@ -128,6 +168,34 @@ To tune on `2024` and evaluate a final model trained on `2014-2024` against `202
 This writes `data/processed/temporal_evaluation_summary.json`. If the dataset does not cover those dates yet, the command exits with a coverage error and prints the available date range.
 The current recommended pure-performance setup is `binary + --drop-raw-ids`. For comparison runs, `--objective lambdarank` is also available, but it is not the default because current validation stability and AUC are weaker than the binary setup.
 
+To run a market-aware benchmark on the same temporal split, add `--include-market-features` so `OddsDecimal` and `Ninki` are available to the model:
+```bash
+./.venv/bin/python src/model/temporal_evaluate.py \
+  --drop-raw-ids \
+  --include-market-features \
+  --output data/processed/experiments/temporal_evaluation_market_aware.json
+```
+This is intended as a comparison benchmark, not the default market-free baseline.
+For the `TargetWin` market-aware run, the summary also includes `edge_diagnostics`, `edge_policy`, and `calibrated_edge_experiments`, which compare the model's predicted win probability against the race-normalized market implied probability and evaluate both thresholded and banded edge policies with optional `raw / platt / isotonic` calibration.
+
+To go one step further and learn when to bet, run the race-pick meta strategy experiment. It scores one candidate from the market-free model and one candidate from the market-aware model, learns an expected net return model on OOF training years, and then searches validation thresholds before applying the best rule to test:
+```bash
+./.venv/bin/python src/model/pick_strategy_temporal.py \
+  --drop-raw-ids \
+  --output data/processed/experiments/pick_strategy_temporal_summary.json
+```
+This is explicitly return-oriented and can choose sparse policies with far fewer bets than the all-races benchmark.
+
+The pick-strategy layer also supports restricting policy search to specific workflow pools. This is useful when a broader search overfits to `standout_only` and you want to keep the search inside prefilter-passing races:
+```bash
+./.venv/bin/python src/model/pick_strategy_temporal.py \
+  --drop-raw-ids \
+  --policy-name prefilter_pass \
+  --policy-name prefilter_pass_contested \
+  --output data/processed/experiments/pick_strategy_temporal_prefilter_only_summary.json
+```
+On the current checked dataset, this restricted search is the preferred workflow variant because it holds test return above break-even while remaining sparse.
+
 To compare an optional race-day feature family on the exact same dataset and the exact same covered races, you can exclude that feature prefix for the baseline run and keep only races where the bulletin is present. For example, once `WH` rows exist in `train_data_raceday.csv`:
 ```bash
 ./.venv/bin/python src/model/temporal_evaluate.py \
@@ -145,7 +213,32 @@ To compare an optional race-day feature family on the exact same dataset and the
 ```
 The first command trains a baseline on the same dataset while removing `WH*` columns. The second keeps the `WH*` columns. Both summaries are evaluated only on races where `WHAvailable > 0` for at least one runner.
 
-### 3c. Stage-2 Reranker Comparison (Run on WSL)
+For live market-aware prediction, fetch `O1` for the target race and build a pending-race dataset with:
+```bash
+./.venv/bin/python src/preprocessing/make_prediction_dataset.py \
+  --include-o1 \
+  --prediction-date 2026-03-14 \
+  --output-filename prediction_data_market.csv
+```
+When an `O1_*.txt` snapshot is present, pending rows with missing market columns are filled from the latest `O1` snapshot for each `RaceKey + Umaban`. That makes the resulting CSV compatible with a model trained using `--include-market-features`.
+
+### 3c. Friday Weekend Package (Run on WSL)
+For race-day operation on the mini PC, build one transfer package on Friday:
+```bash
+./.venv/bin/python scripts/build_weekend_package.py \
+  --package-date 20260501 \
+  --build-train-data \
+  --drop-raw-ids \
+  --include-hc \
+  --include-wc \
+  --prediction-date 2026-05-02 \
+  --prediction-date 2026-05-03
+```
+This writes `data/packages/weekend_YYYYMMDD/` and `data/packages/weekend_package_YYYYMMDD.tar.gz`.
+The package contains `model.txt`, `features.json`, `prediction_base_weekend.csv`, `racekeys_weekend.txt`, and `manifest.json`.
+Race-day Ubuntu should unpack this package, collect race-day data, fill the fixed feature schema, and run inference without retraining.
+
+### 3d. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:
 ```bash
 ./.venv/bin/python src/model/rerank_temporal.py \
@@ -162,6 +255,17 @@ To predict, you need a CSV file with the same features as the training data. If 
   data/processed/test_input.csv \
   --model data/processed/lgbm_targetwin_temporal_norawid.txt
 ```
+
+For race-day prediction with netkeiba body weights, run:
+```bash
+./.venv/bin/python scripts/predict_today_netkeiba_weights.py \
+  --prediction-date 2026-05-02 \
+  --race-key 2026050205010101 \
+  --package-dir data/packages/weekend_20260501 \
+  --use-cache \
+  --notify-discord
+```
+Race-day prediction reads the Friday `prediction_base_weekend.csv`; it does not rebuild features from `data/raw`. Use `--race-day-csv` to join additional same-day fields by `RaceKey` or `RaceKey + Umaban`. By default, the script reads `DISCORD_WEBHOOK_URL` from `.env` in the project root. Use `--discord-webhook-url` to override it for one command, or `--dry-run-discord` to print the Discord messages without sending them. If `--notify-discord` is set but no webhook URL is available, local CSV and monitor outputs are still written and the Discord step is skipped.
 
 ## Tests
 ```bash
