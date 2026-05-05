@@ -235,8 +235,19 @@ For race-day operation on the mini PC, build one transfer package on Friday:
   --prediction-date 2026-05-03
 ```
 This writes `data/packages/weekend_YYYYMMDD/` and `data/packages/weekend_package_YYYYMMDD.tar.gz`.
-The package contains `model.txt`, `features.json`, `prediction_base_weekend.csv`, `racekeys_weekend.txt`, and `manifest.json`.
+The package contains `model.txt`, `features.json`, `model.features.json`, `prediction_base_weekend.csv`, `racekeys_weekend.txt`, and `manifest.json`.
 Race-day Ubuntu should unpack this package, collect race-day data, fill the fixed feature schema, and run inference without retraining.
+
+To build the package and send only the tarball to the mini PC:
+```bash
+scripts/build_and_send_weekend_package.sh \
+  --package-date 20260501 \
+  --prediction-date 2026-05-02 \
+  --prediction-date 2026-05-03
+```
+By default this copies `data/packages/weekend_package_YYYYMMDD.tar.gz` to `k@192.168.0.100:~/projects/keiba-prediction-jvn/data/packages/`.
+The transfer helper reuses `data/processed/train_data.csv` by default. Add `--build-train-data` only when you intentionally want to rebuild the training CSV from all raw files.
+It also reuses existing package model artifacts when present. Optional race-day feature families such as `--include-hc` and `--include-wc` are opt-in so the prediction base is not filtered by columns the current model does not require.
 
 ### 3d. Stage-2 Reranker Comparison (Run on WSL)
 The repository also includes an experimental second-stage reranker that only reorders the stage-1 top `K` contenders:
