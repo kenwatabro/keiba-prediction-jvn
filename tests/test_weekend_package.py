@@ -36,7 +36,20 @@ def build_args(temp_root: Path) -> argparse.Namespace:
 
     model_source.write_text("fake model\n", encoding="utf-8")
     features_source.write_text(
-        json.dumps({"feature_columns": ["FeatureA", "FeatureB"], "target_column": "TargetWin"}),
+        json.dumps(
+            {
+                "feature_columns": ["FeatureA", "FeatureB"],
+                "target_column": "TargetWin",
+                "objective_name": "binary",
+                "explanation": {
+                    "method": "lightgbm_pred_contrib",
+                    "score_space": "raw_margin",
+                    "default_top_k": 2,
+                    "feature_display_names": {"FeatureA": "feature_a"},
+                    "feature_groups": {"sample": ["FeatureA", "FeatureB"]},
+                },
+            }
+        ),
         encoding="utf-8",
     )
     pd.DataFrame(
@@ -123,6 +136,15 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertEqual(manifest["prediction_base"]["validation"]["rows"], 3)
             self.assertEqual(manifest["prediction_base"]["validation"]["race_count"], 2)
             self.assertEqual(manifest["race_day_rules"]["retrain_on_race_day"], False)
+            self.assertEqual(manifest["explanation"]["present"], True)
+            self.assertEqual(manifest["explanation"]["method"], "lightgbm_pred_contrib")
+            self.assertEqual(manifest["explanation"]["score_space"], "raw_margin")
+            self.assertEqual(manifest["explanation"]["default_top_k"], 2)
+
+            features = json.loads((package_dir / "features.json").read_text(encoding="utf-8"))
+            model_features = json.loads((package_dir / "model.features.json").read_text(encoding="utf-8"))
+            self.assertEqual(features["explanation"]["feature_display_names"], {"FeatureA": "feature_a"})
+            self.assertEqual(model_features, features)
 
             with tarfile.open(tarball_path, "r:gz") as tar:
                 names = set(tar.getnames())
@@ -145,6 +167,60 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertEqual(prediction_df["RaceDate"].tolist(), ["2026-05-03"])
             racekeys = (package_dir / "racekeys_weekend.txt").read_text(encoding="utf-8").splitlines()
             self.assertEqual(racekeys, ["2026050308010101"])
+
+    def test_build_weekend_package_adds_explanation_to_legacy_features(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            args = build_args(temp_root)
+            legacy_features = Path(args.features_source)
+            prediction_source = Path(args.prediction_base_source)
+            prediction_df = pd.read_csv(prediction_source)
+            prediction_df["NyusenTosu"] = 12
+            prediction_df["HorseLast3AvgFinishPct"] = 0.42
+            prediction_df["OwnerTop3RateSmoothBefore"] = 0.31
+            prediction_df.to_csv(prediction_source, index=False)
+            legacy_features.write_text(
+                json.dumps(
+                    {
+                        "feature_columns": [
+                            "FeatureA",
+                            "FeatureB",
+                            "NyusenTosu",
+                            "HorseLast3AvgFinishPct",
+                            "OwnerTop3RateSmoothBefore",
+                        ],
+                        "target_column": "TargetWin",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            package_dir, _ = build_weekend_package(args)
+
+            features = json.loads((package_dir / "features.json").read_text(encoding="utf-8"))
+            model_features = json.loads((package_dir / "model.features.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                features["feature_columns"],
+                [
+                    "FeatureA",
+                    "FeatureB",
+                    "NyusenTosu",
+                    "HorseLast3AvgFinishPct",
+                    "OwnerTop3RateSmoothBefore",
+                ],
+            )
+            self.assertEqual(features["explanation"]["method"], "lightgbm_pred_contrib")
+            self.assertEqual(features["explanation"]["score_space"], "raw_margin")
+            self.assertEqual(features["explanation"]["feature_display_names"]["NyusenTosu"], "入線頭数")
+            self.assertEqual(
+                features["explanation"]["feature_display_names"]["HorseLast3AvgFinishPct"],
+                "馬_近3走平均着順率",
+            )
+            self.assertEqual(
+                features["explanation"]["feature_display_names"]["OwnerTop3RateSmoothBefore"],
+                "馬主_補正複勝率",
+            )
+            self.assertEqual(model_features, features)
 
     def test_prediction_base_cache_can_rebuild_existing_package_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
