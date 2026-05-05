@@ -86,10 +86,104 @@ CATEGORICAL_COLS = [
     "WCLastTresenKubun",
 ]
 OBJECTIVE_CHOICES = ["binary", "lambdarank"]
+FEATURE_DISPLAY_NAMES = {
+    "HorseWinRateBefore": "馬_勝率",
+    "HorseTop3RateBefore": "馬_複勝率",
+    "JockeyWinRateBefore": "騎手_勝率",
+    "JockeyTop3RateBefore": "騎手_複勝率",
+    "TrainerWinRateBefore": "調教師_勝率",
+    "TrainerTop3RateBefore": "調教師_複勝率",
+    "HorseRecentAvgFinish": "馬_近走平均着順",
+    "HorseRecentTop3Rate": "馬_近走複勝率",
+    "HorseRecentWinRate": "馬_近走勝率",
+    "DistanceBucketTop3RateBefore": "距離帯_複勝率",
+    "DistanceBucketWinRateBefore": "距離帯_勝率",
+    "WeightDelta": "馬体重増減",
+    "Futan": "斤量",
+    "Barei": "馬齢",
+    "Wakuban": "枠番",
+    "Umaban": "馬番",
+    "Kyori": "距離",
+    "OddsDecimal": "オッズ",
+    "Ninki": "人気",
+    "WHZogenSa": "当日馬体重増減",
+}
+FEATURE_GROUP_DEFINITIONS = {
+    "horse_form": [
+        "HorseWinRateBefore",
+        "HorseTop3RateBefore",
+        "HorseRecentAvgFinish",
+        "HorseRecentTop3Rate",
+        "HorseRecentWinRate",
+    ],
+    "jockey": [
+        "JockeyWinRateBefore",
+        "JockeyTop3RateBefore",
+    ],
+    "trainer": [
+        "TrainerWinRateBefore",
+        "TrainerTop3RateBefore",
+    ],
+    "race_context": [
+        "JyoCD",
+        "GradeCD",
+        "Kyori",
+        "DistanceBucket",
+        "TrackCD",
+        "CourseKubunCD",
+        "TenkoBaba",
+    ],
+    "market": [
+        "OddsDecimal",
+        "Ninki",
+    ],
+    "race_day": [
+        "WHZogenSa",
+        "WECurrentTenkoCD",
+        "WECurrentSibaBabaCD",
+        "WECurrentDirtBabaCD",
+    ],
+}
 
 
 def build_feature_metadata_path(model_path: Path) -> Path:
     return model_path.with_suffix(".features.json")
+
+
+def build_explanation_metadata(feature_columns: list[str], default_top_k: int = 2) -> dict[str, object]:
+    feature_set = set(feature_columns)
+    return {
+        "method": "lightgbm_pred_contrib",
+        "score_space": "raw_margin",
+        "default_top_k": default_top_k,
+        "feature_display_names": {
+            column: display_name
+            for column, display_name in FEATURE_DISPLAY_NAMES.items()
+            if column in feature_set
+        },
+        "feature_groups": {
+            group_name: [column for column in columns if column in feature_set]
+            for group_name, columns in FEATURE_GROUP_DEFINITIONS.items()
+            if any(column in feature_set for column in columns)
+        },
+    }
+
+
+def build_feature_metadata(
+    feature_columns: list[str],
+    target_col: str,
+    objective_name: str,
+    drop_raw_ids: bool = False,
+    include_market_features: bool = False,
+) -> dict[str, object]:
+    return {
+        "feature_columns": feature_columns,
+        "target_column": target_col,
+        "objective_name": objective_name,
+        "drop_raw_ids": drop_raw_ids,
+        "include_market_features": include_market_features,
+        "explanation": build_explanation_metadata(feature_columns),
+    }
 
 
 def load_training_frame(data_path: Path) -> pd.DataFrame:
@@ -367,13 +461,13 @@ def train_model(
     metadata_path = build_feature_metadata_path(model_path)
     metadata_path.write_text(
         json.dumps(
-            {
-                "feature_columns": feature_columns,
-                "target_column": target_col,
-                "objective_name": objective_name,
-                "drop_raw_ids": drop_raw_ids,
-                "include_market_features": include_market_features,
-            },
+            build_feature_metadata(
+                feature_columns,
+                target_col,
+                objective_name,
+                drop_raw_ids=drop_raw_ids,
+                include_market_features=include_market_features,
+            ),
             ensure_ascii=True,
             indent=2,
         ),

@@ -89,6 +89,12 @@ Where `YYYYMMDD` is the Friday package date.
 
 - The exact feature list and feature order expected by `model.txt`.
 - This file is the source of truth for race-day inference.
+- It may include an optional `explanation` object for prediction explanation display.
+- Older consumers must continue to read only `feature_columns` and ignore unknown keys.
+- `explanation.method=lightgbm_pred_contrib` means the mini PC can call LightGBM with `pred_contrib=True` after aligning the frame to `feature_columns`.
+- `explanation.score_space=raw_margin` means contribution values add up to the model raw score. For binary models, these values are logit/raw-margin contributions, not direct probability contributions.
+- `explanation.feature_display_names` is a partial display-name map. If a feature is missing from the map, display the original column name.
+- `explanation.default_top_k` is the default number of positive contributions to show per horse in notifications.
 
 `prediction_base_weekend.csv`
 
@@ -147,6 +153,14 @@ On the mini PC:
 6. Run inference with `model.txt`.
 7. Save predictions with the data-as-of timestamp.
 8. Notify Discord or another configured output destination.
+
+For explanation display, the mini PC should compute contributions during prediction with the existing LightGBM dependency:
+
+```python
+contrib = booster.predict(feature_frame, pred_contrib=True)
+```
+
+The result has `len(feature_columns) + 1` columns. The final column is the bias term. Discord display should select each horse's positive contribution rows, sort descending, show the top `explanation.default_top_k`, and translate names through `feature_display_names` when present.
 
 The race-day command must use the Friday package as input. It should not rebuild the prediction base from `data/raw`.
 

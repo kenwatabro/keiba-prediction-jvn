@@ -17,7 +17,7 @@ sys.path.insert(0, str(MODEL_DIR))
 sys.path.insert(0, str(PREPROCESSING_DIR))
 
 from make_dataset import DEFAULT_RAW_DIR, make_dataset, make_prediction_dataset  # noqa: E402
-from trainer import build_feature_metadata_path, train_model  # noqa: E402
+from trainer import build_explanation_metadata, build_feature_metadata_path, train_model  # noqa: E402
 
 
 DEFAULT_TRAIN_DATA = PROJECT_ROOT / "data" / "processed" / "train_data.csv"
@@ -51,6 +51,42 @@ def load_feature_columns(features_path: Path) -> list[str]:
     if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
         raise ValueError(f"feature_columns must be a list of strings in {features_path}")
     return columns
+
+
+def load_feature_metadata(features_path: Path) -> dict[str, object]:
+    metadata = json.loads(features_path.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict):
+        raise ValueError(f"Feature metadata must be a JSON object in {features_path}")
+    return metadata
+
+
+def summarize_explanation_metadata(features_path: Path) -> dict[str, object]:
+    metadata = load_feature_metadata(features_path)
+    explanation = metadata.get("explanation")
+    if not isinstance(explanation, dict):
+        return {"present": False}
+
+    display_names = explanation.get("feature_display_names")
+    feature_groups = explanation.get("feature_groups")
+    return {
+        "present": True,
+        "method": explanation.get("method"),
+        "score_space": explanation.get("score_space"),
+        "default_top_k": explanation.get("default_top_k"),
+        "display_name_count": len(display_names) if isinstance(display_names, dict) else 0,
+        "group_count": len(feature_groups) if isinstance(feature_groups, dict) else 0,
+    }
+
+
+def ensure_explanation_metadata(features_path: Path) -> None:
+    metadata = load_feature_metadata(features_path)
+    feature_columns = metadata.get("feature_columns")
+    if not isinstance(feature_columns, list) or not all(isinstance(column, str) for column in feature_columns):
+        raise ValueError(f"feature_columns must be a list of strings in {features_path}")
+    if isinstance(metadata.get("explanation"), dict):
+        return
+    metadata["explanation"] = build_explanation_metadata(feature_columns)
+    features_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
 def summarize_csv_dates(csv_path: Path) -> dict[str, object]:
@@ -130,6 +166,8 @@ def copy_model_artifacts(model_source: Path, features_source: Path, package_dir:
         shutil.copy2(features_source, features_path)
     if features_source.resolve() != model_metadata_path.resolve():
         shutil.copy2(features_source, model_metadata_path)
+    ensure_explanation_metadata(features_path)
+    ensure_explanation_metadata(model_metadata_path)
     return model_path, features_path
 
 
@@ -298,6 +336,7 @@ def write_manifest(
             "feature_contract": features_path.name,
             "record_data_as_of_timestamp": True,
         },
+        "explanation": summarize_explanation_metadata(features_path),
     }
     manifest_path = package_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

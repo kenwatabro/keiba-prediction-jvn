@@ -4,6 +4,7 @@ import unittest
 import json
 from pathlib import Path
 
+import lightgbm as lgb
 import pandas as pd
 
 
@@ -25,6 +26,7 @@ from temporal_evaluate import (  # noqa: E402
 )
 from trainer import (  # noqa: E402
     build_feature_metadata_path,
+    cast_categoricals,
     filter_by_date_range,
     filter_to_single_winner_races,
     select_feature_columns,
@@ -134,6 +136,15 @@ class ModelPipelineTests(unittest.TestCase):
             self.assertTrue(model_path.exists())
             metadata_path = build_feature_metadata_path(model_path)
             self.assertTrue(metadata_path.exists())
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self.assertIsInstance(metadata["feature_columns"], list)
+            self.assertEqual(metadata["target_column"], "Target")
+            self.assertEqual(metadata["objective_name"], "binary")
+            self.assertEqual(metadata["explanation"]["method"], "lightgbm_pred_contrib")
+            self.assertEqual(metadata["explanation"]["score_space"], "raw_margin")
+            self.assertEqual(metadata["explanation"]["default_top_k"], 2)
+            self.assertIsInstance(metadata["explanation"]["feature_display_names"], dict)
+            self.assertIsInstance(metadata["explanation"]["feature_groups"], dict)
 
             prediction_input = training_df.drop(columns=["Target"]).copy()
             prediction_input["IgnoreMe"] = "extra"
@@ -143,6 +154,39 @@ class ModelPipelineTests(unittest.TestCase):
             predicted = predict(prediction_csv, model_path=model_path)
             self.assertEqual(len(predicted), len(prediction_input))
             self.assertIn("Prediction", predicted.columns)
+
+    def test_lightgbm_pred_contrib_matches_raw_score_space(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            train_csv = temp_root / "train_data.csv"
+            model_path = temp_root / "lgbm_model.txt"
+
+            training_df = build_training_dataframe()
+            training_df["HorseTop3RateBefore"] = [index / 20 for index in range(len(training_df))]
+            training_df["JockeyWinRateBefore"] = [0.2 + (index % 4) / 20 for index in range(len(training_df))]
+            training_df.to_csv(train_csv, index=False)
+
+            train_model(data_path=train_csv, model_path=model_path)
+            metadata = json.loads(build_feature_metadata_path(model_path).read_text(encoding="utf-8"))
+            feature_columns = metadata["feature_columns"]
+            booster = lgb.Booster(model_file=str(model_path))
+            feature_frame = cast_categoricals(training_df, feature_columns)
+            for column in feature_frame.columns:
+                dtype = feature_frame[column].dtype
+                if not (
+                    pd.api.types.is_numeric_dtype(dtype)
+                    or pd.api.types.is_bool_dtype(dtype)
+                    or isinstance(dtype, pd.CategoricalDtype)
+                ):
+                    feature_frame[column] = pd.to_numeric(feature_frame[column], errors="coerce")
+
+            contrib = booster.predict(feature_frame, pred_contrib=True)
+            raw_scores = booster.predict(feature_frame, raw_score=True)
+
+            self.assertEqual(contrib.shape, (len(training_df), len(feature_columns) + 1))
+            for contrib_sum, raw_score in zip(contrib.sum(axis=1), raw_scores):
+                self.assertAlmostEqual(float(contrib_sum), float(raw_score), places=6)
+            self.assertEqual(metadata["explanation"]["score_space"], "raw_margin")
 
     def test_prediction_works_without_feature_metadata_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
