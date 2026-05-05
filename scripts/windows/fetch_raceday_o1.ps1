@@ -5,7 +5,8 @@ param(
     [string]$ProjectRoot = "",
     [string]$OutputDir = "D:\jra-van-raw",
     [string]$SavePath = "D:\JVLinkData",
-    [bool]$Overwrite = $true
+    [bool]$Overwrite = $true,
+    [bool]$AllowEmpty = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,9 +71,13 @@ $args = @(
 if ($Overwrite) {
     $args += "--overwrite"
 }
+if ($AllowEmpty) {
+    $args += "--allow-empty"
+}
 
 Write-Host "=== Fetch O1 ($RaceKey) ==="
 Write-Host "Python command: $PythonCommand"
+Write-Host "Allow empty realtime odds: $AllowEmpty"
 Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
 $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
 & $PythonCommand @args

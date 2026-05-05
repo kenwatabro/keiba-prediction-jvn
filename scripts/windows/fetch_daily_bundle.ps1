@@ -5,6 +5,8 @@ param(
     [string]$SavePath = "D:\JVLinkData",
     [string]$StartDate = "",
     [string]$EndDate = "",
+    [int]$RaceLookbackDays = 6,
+    [int]$WorkoutLookbackDays = 6,
     [switch]$SkipWood,
     [switch]$Overwrite
 )
@@ -63,26 +65,78 @@ if (-not (Test-Path $fetchScript)) {
 
 function Invoke-Fetch {
     param(
-        [string]$Spec,
-        [int]$Option
+        [string]$Spec
     )
+
+    $effectiveStartDate = $StartDate
+    $effectiveEndDate = $EndDate
+    $allowEmpty = $false
+
+    switch ($Spec) {
+        "RACE" {
+            if ($StartDate -eq $EndDate) {
+                $baseDate = [datetime]::ParseExact($EndDate, "yyyyMMdd", $null)
+                $effectiveStartDate = $baseDate.AddDays(-1 * $RaceLookbackDays).ToString("yyyyMMdd")
+            }
+            $option = 1
+            break
+        }
+        "SLOP" {
+            if ($StartDate -eq $EndDate) {
+                $baseDate = [datetime]::ParseExact($EndDate, "yyyyMMdd", $null)
+                $effectiveStartDate = $baseDate.AddDays(-1 * $WorkoutLookbackDays).ToString("yyyyMMdd")
+            }
+            $option = 3
+            $allowEmpty = $true
+            break
+        }
+        "WOOD" {
+            if ($StartDate -eq $EndDate) {
+                $baseDate = [datetime]::ParseExact($EndDate, "yyyyMMdd", $null)
+                $effectiveStartDate = $baseDate.AddDays(-1 * $WorkoutLookbackDays).ToString("yyyyMMdd")
+            }
+            $option = 3
+            $allowEmpty = $true
+            break
+        }
+        default {
+            $option = if ($StartDate -eq $EndDate) { 1 } else { 3 }
+            break
+        }
+    }
 
     $args = @(
         $fetchScript,
-        "--start", $StartDate,
-        "--end", $EndDate,
+        "--start", $effectiveStartDate,
+        "--end", $effectiveEndDate,
         "--spec", $Spec,
-        "--option", $Option,
+        "--option", $option,
         "--out", $OutputDir,
         "--save-path", $SavePath
     )
+    if ($Spec -eq "RACE") {
+        $args += @(
+            "--filter-start", $StartDate,
+            "--filter-end", $EndDate
+        )
+    }
     if ($Overwrite) {
         $args += "--overwrite"
     }
+    if ($allowEmpty) {
+        $args += "--allow-empty"
+    }
 
     Write-Host ""
-    Write-Host "=== Fetch $Spec ($StartDate - $EndDate) ==="
+    Write-Host "=== Fetch $Spec ($effectiveStartDate - $effectiveEndDate) ==="
     Write-Host "Python command: $PythonCommand"
+    Write-Host "JVOpen option: $option"
+    if ($allowEmpty) {
+        Write-Host "Allow empty window: $allowEmpty"
+    }
+    if ($effectiveStartDate -ne $StartDate -or $effectiveEndDate -ne $EndDate) {
+        Write-Host "Requested date window: $StartDate - $EndDate"
+    }
     Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
     $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
     & $PythonCommand @args
@@ -91,11 +145,11 @@ function Invoke-Fetch {
     }
 }
 
-Invoke-Fetch -Spec "RACE" -Option 3
-Invoke-Fetch -Spec "SLOP" -Option 3
+Invoke-Fetch -Spec "RACE"
+Invoke-Fetch -Spec "SLOP"
 
 if (-not $SkipWood) {
-    Invoke-Fetch -Spec "WOOD" -Option 3
+    Invoke-Fetch -Spec "WOOD"
 }
 
 Write-Host ""
