@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -7,15 +8,31 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import EVALUATION_MODELS_DIR, EVALUATIONS_DIR, LEGACY_PROCESSED_DIR, STRATEGY_MODELS_DIR, existing_or_default  # noqa: E402
 from pick_strategy_temporal import build_pick_candidate_frame, build_selected_picks, cast_pick_features
 from predictor import load_feature_columns
 from trainer import cast_categoricals
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BASE_MODEL = PROJECT_ROOT / "data" / "processed" / "experiments" / "lgbm_targetwin_temporal_norawid.txt"
-DEFAULT_MARKET_MODEL = PROJECT_ROOT / "data" / "processed" / "experiments" / "lgbm_targetwin_temporal_market_norawid.txt"
-DEFAULT_PICK_MODEL = PROJECT_ROOT / "data" / "processed" / "experiments" / "lgbm_pick_strategy_final_norawid.txt"
-DEFAULT_POLICY_SUMMARY = PROJECT_ROOT / "data" / "processed" / "experiments" / "pick_strategy_temporal_summary.json"
+DEFAULT_BASE_MODEL = existing_or_default(
+    EVALUATION_MODELS_DIR / "lgbm_targetwin_temporal_norawid.txt",
+    LEGACY_PROCESSED_DIR / "experiments" / "lgbm_targetwin_temporal_norawid.txt",
+)
+DEFAULT_MARKET_MODEL = existing_or_default(
+    EVALUATION_MODELS_DIR / "lgbm_targetwin_temporal_market_norawid.txt",
+    LEGACY_PROCESSED_DIR / "experiments" / "lgbm_targetwin_temporal_market_norawid.txt",
+)
+DEFAULT_PICK_MODEL = existing_or_default(
+    STRATEGY_MODELS_DIR / "lgbm_pick_strategy_final_norawid.txt",
+    LEGACY_PROCESSED_DIR / "experiments" / "lgbm_pick_strategy_final_norawid.txt",
+)
+DEFAULT_POLICY_SUMMARY = existing_or_default(
+    EVALUATIONS_DIR / "experiments" / "pick_strategy_temporal_summary.json",
+    LEGACY_PROCESSED_DIR / "experiments" / "pick_strategy_temporal_summary.json",
+)
 PICK_CATEGORICAL_FEATURES = {
     "CandidateSource",
     "JyoCD",

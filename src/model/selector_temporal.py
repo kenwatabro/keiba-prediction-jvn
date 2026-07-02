@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -7,6 +8,11 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import EVALUATIONS_DIR, STRATEGY_MODELS_DIR  # noqa: E402
 from temporal_evaluate import (
     build_model_picks,
     select_period,
@@ -25,8 +31,8 @@ from trainer import (
     train_final_booster,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+OUTPUT_DIR = EVALUATIONS_DIR
+MODEL_OUTPUT_DIR = STRATEGY_MODELS_DIR
 LOGIT_CLIP_EPSILON = 1e-6
 BASE_TARGET_SPECS = [
     ("TargetWin", "WinBaseScore"),
@@ -455,6 +461,11 @@ def main() -> None:
         default=str(OUTPUT_DIR / "experiments" / "selector_temporal_summary.json"),
         help="Output summary JSON path",
     )
+    parser.add_argument(
+        "--model-output-dir",
+        default=str(MODEL_OUTPUT_DIR),
+        help="Directory for selector and base model artifacts.",
+    )
     parser.add_argument("--train-start", default="2014-01-01")
     parser.add_argument("--train-end", default="2023-12-31")
     parser.add_argument("--validation-start", default="2024-01-01")
@@ -473,6 +484,8 @@ def main() -> None:
     df = load_training_frame(data_path)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_output_dir = Path(args.model_output_dir)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_train_df = select_period(df, "train", args.train_start, args.train_end)
     raw_validation_df = select_period(df, "validation", args.validation_start, args.validation_end)
@@ -500,8 +513,8 @@ def main() -> None:
         raise ValueError("Selector OOF split is empty.")
 
     raw_id_suffix = "_norawid" if args.drop_raw_ids else ""
-    selector_tuning_path = output_path.parent / f"lgbm_selector_tuning{raw_id_suffix}.txt"
-    selector_final_path = output_path.parent / f"lgbm_selector_final{raw_id_suffix}.txt"
+    selector_tuning_path = model_output_dir / f"lgbm_selector_tuning{raw_id_suffix}.txt"
+    selector_final_path = model_output_dir / f"lgbm_selector_final{raw_id_suffix}.txt"
     selector_tuning = fit_selector_booster(
         selector_meta_train,
         selector_meta_eval,
@@ -513,7 +526,7 @@ def main() -> None:
     tuning_boosters, final_boosters, _, tuning_rounds = train_base_temporal_models(
         train_df,
         validation_df,
-        output_path.parent,
+        model_output_dir,
         drop_raw_ids=args.drop_raw_ids,
     )
     validation_selector_frame = score_with_base_models(validation_df, tuning_boosters, feature_columns_by_target)
@@ -553,6 +566,12 @@ def main() -> None:
         "drop_raw_ids": args.drop_raw_ids,
         "oof_start_year": args.oof_start_year,
         "selector_holdout_years": args.selector_holdout_years,
+        "model_artifacts": {
+            "directory": str(model_output_dir),
+            "selector_tuning_model": str(selector_tuning_path),
+            "selector_final_model": str(selector_final_path),
+            "selector_final_features": str(build_feature_metadata_path(selector_final_path)),
+        },
         "single_winner_filter": single_winner_filter,
         "selector_feature_count": len(selector_feature_columns),
         "selector_feature_columns": selector_feature_columns,

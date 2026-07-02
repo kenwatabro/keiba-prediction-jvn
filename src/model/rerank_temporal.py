@@ -1,11 +1,17 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import EVALUATIONS_DIR, STRATEGY_MODELS_DIR  # noqa: E402
 from temporal_evaluate import (
     build_model_picks,
     select_period,
@@ -23,8 +29,8 @@ from trainer import (
     train_final_booster,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+OUTPUT_DIR = EVALUATIONS_DIR
+MODEL_OUTPUT_DIR = STRATEGY_MODELS_DIR
 RERANK_SOURCE_SPECS = [
     ("HorseWinRateBefore", True),
     ("HorseTop3RateBefore", True),
@@ -234,6 +240,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train a stage-2 reranker on top-K contenders from the temporal base model.")
     parser.add_argument("--data", default=str(DEFAULT_DATA_PATH), help="Training CSV path")
     parser.add_argument("--output", default=str(OUTPUT_DIR / "rerank_evaluation_summary.json"), help="Output summary JSON path")
+    parser.add_argument("--model-output-dir", default=str(MODEL_OUTPUT_DIR), help="Directory for reranker model artifacts")
     parser.add_argument("--top-k", type=int, default=3, help="Number of contenders passed from stage-1 to stage-2")
     parser.add_argument("--drop-raw-ids", action="store_true", help="Use the drop-raw-ids stage-1 variant")
     parser.add_argument("--train-start", default="2014-01-01")
@@ -256,12 +263,14 @@ def main() -> None:
     stage1_feature_columns = select_feature_columns(df, "TargetWin", drop_raw_ids=args.drop_raw_ids)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_output_dir = Path(args.model_output_dir)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
-    stage1_tuning_path = output_path.parent / "lgbm_targetwin_rerank_stage1_tuning.txt"
-    stage1_final_path = output_path.parent / "lgbm_targetwin_rerank_stage1.txt"
+    stage1_tuning_path = model_output_dir / "lgbm_targetwin_rerank_stage1_tuning.txt"
+    stage1_final_path = model_output_dir / "lgbm_targetwin_rerank_stage1.txt"
     if args.drop_raw_ids:
-        stage1_tuning_path = output_path.parent / "lgbm_targetwin_rerank_stage1_tuning_norawid.txt"
-        stage1_final_path = output_path.parent / "lgbm_targetwin_rerank_stage1_norawid.txt"
+        stage1_tuning_path = model_output_dir / "lgbm_targetwin_rerank_stage1_tuning_norawid.txt"
+        stage1_final_path = model_output_dir / "lgbm_targetwin_rerank_stage1_norawid.txt"
 
     stage1_tuning = fit_booster(
         train_df,
@@ -291,11 +300,11 @@ def main() -> None:
     if contender_train.empty or contender_eval.empty:
         raise ValueError("Not enough validation races to train and evaluate the reranker.")
 
-    stage2_tuning_path = output_path.parent / "lgbm_targetwin_rerank_stage2_tuning.txt"
-    stage2_final_path = output_path.parent / "lgbm_targetwin_rerank_stage2.txt"
+    stage2_tuning_path = model_output_dir / "lgbm_targetwin_rerank_stage2_tuning.txt"
+    stage2_final_path = model_output_dir / "lgbm_targetwin_rerank_stage2.txt"
     if args.drop_raw_ids:
-        stage2_tuning_path = output_path.parent / "lgbm_targetwin_rerank_stage2_tuning_norawid.txt"
-        stage2_final_path = output_path.parent / "lgbm_targetwin_rerank_stage2_norawid.txt"
+        stage2_tuning_path = model_output_dir / "lgbm_targetwin_rerank_stage2_tuning_norawid.txt"
+        stage2_final_path = model_output_dir / "lgbm_targetwin_rerank_stage2_norawid.txt"
 
     rerank_booster = fit_rerank_booster(contender_train, contender_eval, RERANK_FEATURE_COLS, stage2_tuning_path)
     final_rerank_booster = train_final_rerank_booster(
@@ -338,6 +347,14 @@ def main() -> None:
         "data_path": str(data_path),
         "top_k": args.top_k,
         "drop_raw_ids": args.drop_raw_ids,
+        "model_artifacts": {
+            "directory": str(model_output_dir),
+            "stage1_tuning_model": str(stage1_tuning_path),
+            "stage1_final_model": str(stage1_final_path),
+            "stage2_tuning_model": str(stage2_tuning_path),
+            "stage2_final_model": str(stage2_final_path),
+            "stage2_final_features": str(build_feature_metadata_path(stage2_final_path)),
+        },
         "stage1_feature_count": len(stage1_feature_columns),
         "stage2_feature_count": len(RERANK_FEATURE_COLS),
         "validation_candidate_coverage": summarize_candidate_coverage(contender_validation),

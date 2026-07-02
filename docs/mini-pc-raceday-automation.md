@@ -19,7 +19,7 @@ The mini PC must not retrain models and must not rebuild the Friday prediction b
 The current command already performs the core race-day work:
 
 ```bash
-venv/bin/python scripts/predict_today_netkeiba_weights.py \
+venv/bin/python scripts/mini_raceday/predict_today_netkeiba_weights.py \
   --prediction-date 2026-05-02 \
   --race-key 2026050205010101 \
   --package-dir /home/USER/keiba/runs/weekend_20260501 \
@@ -186,7 +186,7 @@ Description=JRA race-day automation runner
 Type=simple
 WorkingDirectory=/home/USER/jra-van
 EnvironmentFile=/home/USER/keiba/env/race-day.env
-ExecStart=/home/USER/jra-van/.venv/bin/python scripts/race_day_runner.py
+ExecStart=/home/USER/jra-van/.venv/bin/python scripts/mini_raceday/race_day_runner.py
 Restart=on-failure
 RestartSec=60
 ```
@@ -240,9 +240,9 @@ These should update state, retry until the deadline, and include the final reaso
 
 ## Implementation Steps
 
-1. Add `scripts/race_day_runner.py`.
+1. Add `scripts/mini_raceday/race_day_runner.py`.
 2. Make it load package, schedule, state, and lock.
-3. Make it sleep until due races and call `scripts/predict_today_netkeiba_weights.py` one race at a time.
+3. Make it sleep until due races and call `scripts/mini_raceday/predict_today_netkeiba_weights.py` one race at a time.
 4. Parse the generated `prediction_monitor_*.json` to decide complete vs partial.
 5. Add tests for timing decisions and duplicate-notification prevention.
 6. Add sample `systemd` unit files under `deploy/systemd/`.
@@ -250,7 +250,7 @@ These should update state, retry until the deadline, and include the final reaso
 Implemented entry point:
 
 ```bash
-python scripts/race_day_runner.py \
+python scripts/mini_raceday/race_day_runner.py \
   --prediction-date 2026-05-02 \
   --package-dir /home/USER/keiba/runs/weekend_20260501 \
   --output-root /home/USER/keiba/runs \

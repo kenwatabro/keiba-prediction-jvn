@@ -24,6 +24,7 @@ from race_day_runner import (  # noqa: E402
     notify_operational_error_once,
     run_prediction_attempt,
     should_attempt,
+    validate_package,
 )
 
 
@@ -69,6 +70,15 @@ class RaceDayRunnerTests(unittest.TestCase):
             dry_run_discord=False,
         )
 
+    def write_minimal_package(self, package_dir: Path, manifest: dict[str, object] | None = None) -> None:
+        package_dir.mkdir(parents=True, exist_ok=True)
+        for name in ["model.txt", "features.json", "prediction_base_weekend.csv", "racekeys_weekend.txt"]:
+            (package_dir / name).write_text("placeholder\n", encoding="utf-8")
+        (package_dir / "manifest.json").write_text(
+            json.dumps(manifest or {"schema_version": 1, "manifest_type": "weekend_package"}),
+            encoding="utf-8",
+        )
+
     def test_build_schedule_uses_hasso_time_offsets(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prediction_base = Path(temp_dir) / "prediction_base_weekend.csv"
@@ -84,6 +94,29 @@ class RaceDayRunnerTests(unittest.TestCase):
             self.assertEqual(schedule[0].post_at.isoformat(), "2026-05-02T10:05:00+09:00")
             self.assertEqual(schedule[0].first_due_at.isoformat(), "2026-05-02T09:05:00+09:00")
             self.assertEqual(schedule[0].deadline_at.isoformat(), "2026-05-02T09:40:00+09:00")
+
+    def test_validate_package_accepts_supported_manifest_schema(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "weekend_20260501"
+            self.write_minimal_package(package_dir)
+
+            validate_package(package_dir)
+
+    def test_validate_package_rejects_missing_manifest_schema(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "weekend_20260501"
+            self.write_minimal_package(package_dir, manifest={"manifest_type": "weekend_package"})
+
+            with self.assertRaisesRegex(ValueError, "schema_version"):
+                validate_package(package_dir)
+
+    def test_validate_package_rejects_wrong_manifest_type(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "weekend_20260501"
+            self.write_minimal_package(package_dir, manifest={"schema_version": 1, "manifest_type": "raw_bundle"})
+
+            with self.assertRaisesRegex(ValueError, "manifest_type"):
+                validate_package(package_dir)
 
     def test_state_prevents_attempt_before_due_and_after_terminal_status(self):
         with tempfile.TemporaryDirectory() as temp_dir:
