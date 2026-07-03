@@ -165,7 +165,7 @@ The result has `len(feature_columns) + 1` columns. The final column is the bias 
 The race-day command must use the Friday package as input. It should not rebuild the prediction base from `data/raw`.
 
 ```bash
-venv/bin/python scripts/predict_today_netkeiba_weights.py \
+venv/bin/python scripts/mini_raceday/predict_today_netkeiba_weights.py \
   --prediction-date 2026-05-02 \
   --race-key 2026050205010101 \
   --package-dir /home/USER/keiba/runs/weekend_20260501 \

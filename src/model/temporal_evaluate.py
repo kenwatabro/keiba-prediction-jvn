@@ -1,6 +1,7 @@
 import argparse
 import math
 import json
+import sys
 from pathlib import Path
 
 import lightgbm as lgb
@@ -10,6 +11,11 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import EVALUATION_MODELS_DIR, EVALUATIONS_DIR  # noqa: E402
 from trainer import (
     DEFAULT_DATA_PATH,
     OBJECTIVE_CHOICES,
@@ -24,8 +30,8 @@ from trainer import (
     train_final_booster,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+OUTPUT_DIR = EVALUATIONS_DIR
+MODEL_OUTPUT_DIR = EVALUATION_MODELS_DIR
 RACE_KEY_COLS = ["RaceKey"]
 SELECTIVE_MARGIN_THRESHOLDS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
 SELECTIVE_SCORE_THRESHOLDS = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
@@ -1115,6 +1121,11 @@ def main() -> None:
         help="Output summary JSON path",
     )
     parser.add_argument(
+        "--model-output-dir",
+        default=str(MODEL_OUTPUT_DIR),
+        help="Directory for model artifacts produced during evaluation.",
+    )
+    parser.add_argument(
         "--objective",
         default="binary",
         choices=OBJECTIVE_CHOICES,
@@ -1151,6 +1162,8 @@ def main() -> None:
     df = load_training_frame(data_path)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_output_dir = Path(args.model_output_dir)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     coverage = build_data_coverage(df)
 
@@ -1166,7 +1179,7 @@ def main() -> None:
     try:
         result["top3_model"] = train_and_evaluate_target(
             df,
-            output_path.parent,
+            model_output_dir,
             "TargetTop3",
             args.objective,
             args.drop_raw_ids,
@@ -1182,7 +1195,7 @@ def main() -> None:
         )
         result["win_model"] = train_and_evaluate_target(
             df,
-            output_path.parent,
+            model_output_dir,
             "TargetWin",
             args.objective,
             args.drop_raw_ids,

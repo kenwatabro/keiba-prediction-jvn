@@ -7,18 +7,24 @@ __pycache__/
 *.py[cod]
 
 data/raw/
+data/datasets/
+data/models/
+data/evaluations/
 data/processed/
 data/archive/
 data/packages/
 data/raceday/
 data/locks/
 data/env/race-day.env
+data/shared/
 
 *.ipynb
 .ipynb_checkpoints/
 
 docs/*
 !docs/project-documents.md
+!docs/refactor-status.md
+!docs/system-overview.md
 !docs/weekend-operations-flow.md
 !docs/mini-pc-raceday-automation.md
 doc/

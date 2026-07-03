@@ -150,9 +150,9 @@ Current TODO note as of `2026-04-01`:
   3. re-run the holdout comparison after shadow logs accumulate or after a fresh holdout is defined
   4. only promote a new live rule after it clears the workflow gate reproducibly
 - Reference artifacts from this review:
-  - `data/processed/experiments/win_edge_policy_candidate_summary.json`
-  - `data/processed/experiments/pick_strategy_stability_summary.json`
-  - `data/processed/experiments/pick_strategy_temporal_prefilter_only_summary.json`
+  - `data/evaluations/experiments/win_edge_policy_candidate_summary.json`
+  - `data/evaluations/experiments/pick_strategy_stability_summary.json`
+  - `data/evaluations/experiments/pick_strategy_temporal_prefilter_only_summary.json`
 
 Exit condition:
 

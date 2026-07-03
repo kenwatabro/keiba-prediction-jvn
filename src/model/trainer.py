@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import lightgbm as lgb
@@ -7,8 +8,13 @@ import pandas as pd
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "train_data.csv"
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "lgbm_model.txt"
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import MODELS_DIR, default_train_data_path  # noqa: E402
+
+DEFAULT_DATA_PATH = default_train_data_path()
+DEFAULT_MODEL_PATH = MODELS_DIR / "lgbm_model.txt"
 DEFAULT_TARGET_COL = "TargetTop3"
 NON_FEATURE_COLS = {
     "RaceKey",

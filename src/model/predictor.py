@@ -1,12 +1,18 @@
 import json
+import sys
 import lightgbm as lgb
 import pandas as pd
 import argparse
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import MODELS_DIR, existing_or_default  # noqa: E402
 from trainer import cast_categoricals
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "lgbm_model.txt"
+DEFAULT_MODEL_PATH = existing_or_default(MODELS_DIR / "lgbm_model.txt", Path(__file__).resolve().parent / "lgbm_model.txt")
 
 
 def build_feature_metadata_path(model_path: Path) -> Path:

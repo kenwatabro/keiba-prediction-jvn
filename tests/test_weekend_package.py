@@ -131,8 +131,13 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertEqual(racekeys, ["2026050205010101", "2026050308010101"])
 
             manifest = json.loads((package_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], 1)
+            self.assertEqual(manifest["manifest_type"], "weekend_package")
             self.assertEqual(manifest["package_id"], "weekend_20260501")
             self.assertEqual(manifest["training"]["mode"], "copied")
+            self.assertIn("raw_coverage", manifest)
+            self.assertIn("train_coverage", manifest)
+            self.assertIn("prediction_coverage", manifest)
             self.assertEqual(manifest["prediction_base"]["validation"]["rows"], 3)
             self.assertEqual(manifest["prediction_base"]["validation"]["race_count"], 2)
             self.assertEqual(manifest["race_day_rules"]["retrain_on_race_day"], False)

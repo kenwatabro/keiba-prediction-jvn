@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,11 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import EVALUATIONS_DIR, STRATEGY_MODELS_DIR  # noqa: E402
 from selector_temporal import build_oof_year_folds, split_selector_meta_train_eval
 from temporal_evaluate import (
     build_market_implied_probabilities,
@@ -28,8 +34,8 @@ from trainer import (
     summarize_single_winner_filter,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+OUTPUT_DIR = EVALUATIONS_DIR
+MODEL_OUTPUT_DIR = STRATEGY_MODELS_DIR
 LOGIT_CLIP_EPSILON = 1e-6
 PICK_STANDOUT_PROB_THRESHOLD = 0.65
 PICK_STANDOUT_MARGIN_THRESHOLD = 0.05
@@ -971,6 +977,7 @@ def score_temporal_period_candidates(
 def run_pick_strategy_experiment(
     data_path: Path,
     output_path: Path,
+    model_output_dir: Path,
     train_start: str,
     train_end: str,
     validation_start: str,
@@ -989,6 +996,7 @@ def run_pick_strategy_experiment(
 
     df = load_training_frame(data_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_train_df = select_period(df, "train", train_start, train_end)
     raw_validation_df = select_period(df, "validation", validation_start, validation_end)
@@ -1026,15 +1034,15 @@ def run_pick_strategy_experiment(
         raise ValueError("Pick strategy OOF split is empty.")
 
     raw_id_suffix = "_norawid" if drop_raw_ids else ""
-    tuning_model_path = output_path.parent / f"lgbm_pick_strategy_tuning{raw_id_suffix}.txt"
-    final_model_path = output_path.parent / f"lgbm_pick_strategy_final{raw_id_suffix}.txt"
+    tuning_model_path = model_output_dir / f"lgbm_pick_strategy_tuning{raw_id_suffix}.txt"
+    final_model_path = model_output_dir / f"lgbm_pick_strategy_final{raw_id_suffix}.txt"
     tuning_booster = fit_pick_strategy_booster(meta_train, meta_eval, pick_feature_columns, tuning_model_path)
     tuning_rounds = int(tuning_booster.best_iteration or tuning_booster.current_iteration())
 
     validation_candidates, validation_source_rounds = score_temporal_period_candidates(
         train_df,
         validation_df,
-        output_path.parent,
+        model_output_dir,
         "pick_validation",
         drop_raw_ids=drop_raw_ids,
         eval_race_any_positive_columns=eval_race_any_positive_columns,
@@ -1076,7 +1084,7 @@ def run_pick_strategy_experiment(
     test_candidates, test_source_rounds = score_temporal_period_candidates(
         final_history_df,
         test_df,
-        output_path.parent,
+        model_output_dir,
         "pick_test",
         drop_raw_ids=drop_raw_ids,
         eval_race_any_positive_columns=eval_race_any_positive_columns,
@@ -1096,6 +1104,12 @@ def run_pick_strategy_experiment(
         "evaluation_subset_any_positive_columns": list(eval_race_any_positive_columns or []),
         "include_experimental_race_shape_features": include_experimental_race_shape_features,
         "allowed_policy_names": list(allowed_policy_names or []),
+        "model_artifacts": {
+            "directory": str(model_output_dir),
+            "tuning_model": str(tuning_model_path),
+            "final_model": str(final_model_path),
+            "final_features": str(build_feature_metadata_path(final_model_path)),
+        },
         "single_winner_filter": single_winner_filter,
         "pick_feature_count": len(pick_feature_columns),
         "pick_feature_columns": pick_feature_columns,
@@ -1144,6 +1158,11 @@ def main() -> None:
         default=str(OUTPUT_DIR / "experiments" / "pick_strategy_temporal_summary.json"),
         help="Output summary JSON path",
     )
+    parser.add_argument(
+        "--model-output-dir",
+        default=str(MODEL_OUTPUT_DIR),
+        help="Directory for strategy model artifacts.",
+    )
     parser.add_argument("--train-start", default="2014-01-01")
     parser.add_argument("--train-end", default="2023-12-31")
     parser.add_argument("--validation-start", default="2024-01-01")
@@ -1179,6 +1198,7 @@ def main() -> None:
     result = run_pick_strategy_experiment(
         data_path=Path(args.data),
         output_path=Path(args.output),
+        model_output_dir=Path(args.model_output_dir),
         train_start=args.train_start,
         train_end=args.train_end,
         validation_start=args.validation_start,

@@ -7,6 +7,6 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/projects/keiba-prediction-jvn
 EnvironmentFile=%h/projects/keiba-prediction-jvn/data/env/race-day.env
-ExecStart=/usr/bin/python3 scripts/race_day_runner.py --notify-discord --lock-file %h/projects/keiba-prediction-jvn/data/locks/race_day_runner.lock
+ExecStart=/usr/bin/python3 scripts/mini_raceday/race_day_runner.py --notify-discord --lock-file %h/projects/keiba-prediction-jvn/data/locks/race_day_runner.lock
 Restart=on-failure
 RestartSec=60

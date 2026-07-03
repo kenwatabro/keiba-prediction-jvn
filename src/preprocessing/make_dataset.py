@@ -1,15 +1,20 @@
 import argparse
 import glob
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import DATASETS_DIR, RAW_DIR  # noqa: E402
 from parser import JVParser
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_RAW_DIR = PROJECT_ROOT / "data" / "raw"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+DEFAULT_RAW_DIR = RAW_DIR
+DEFAULT_OUTPUT_DIR = DATASETS_DIR
 
 RACE_KEY_COLS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"]
 RACE_CONTEXT_COLS = [

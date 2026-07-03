@@ -10,10 +10,14 @@ import lightgbm as lgb
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
 PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 if str(PREPROCESSING_DIR) not in sys.path:
     sys.path.insert(0, str(PREPROCESSING_DIR))
 
+from project_paths import EVALUATIONS_DIR, RAW_DIR, STRATEGY_MODELS_DIR, default_pair_data_path  # noqa: E402
 from make_dataset import build_umaren_pair_label_frame  # noqa: E402
 from selector_temporal import build_oof_year_folds, split_selector_meta_train_eval  # noqa: E402
 from temporal_evaluate import select_period  # noqa: E402
@@ -27,8 +31,9 @@ from trainer import (  # noqa: E402
     split_train_validation,
 )
 
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
-DEFAULT_UMAREN_DATA_PATH = OUTPUT_DIR / "umaren_pair_data.csv"
+OUTPUT_DIR = EVALUATIONS_DIR
+MODEL_OUTPUT_DIR = STRATEGY_MODELS_DIR
+DEFAULT_UMAREN_DATA_PATH = default_pair_data_path("umaren_pair_data.csv")
 UMAREN_STAGE1_TARGET_SPECS = [
     ("TargetTop3", "Top3Score"),
     ("TargetWin", "WinScore"),
@@ -607,12 +612,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train and evaluate a return-oriented umaren pair strategy.")
     parser.add_argument("--data", default=str(DEFAULT_DATA_PATH), help="Horse-level training CSV path")
     parser.add_argument("--umaren-data", default=str(DEFAULT_UMAREN_DATA_PATH), help="Umaren pair CSV path")
-    parser.add_argument("--raw-dir", default=str(PROJECT_ROOT / "data" / "raw"), help="Raw JV-Link text directory")
+    parser.add_argument("--raw-dir", default=str(RAW_DIR), help="Raw JV-Link text directory")
     parser.add_argument("--refresh-umaren-data", action="store_true", help="Rebuild the umaren pair CSV from raw text files")
     parser.add_argument(
         "--output",
         default=str(OUTPUT_DIR / "experiments" / "umaren_strategy_temporal_summary.json"),
         help="Output summary JSON path",
+    )
+    parser.add_argument(
+        "--model-output-dir",
+        default=str(MODEL_OUTPUT_DIR),
+        help="Directory for umaren strategy model artifacts.",
     )
     parser.add_argument("--train-start", default="2014-01-01")
     parser.add_argument("--train-end", default="2023-12-31")
@@ -646,6 +656,8 @@ def main() -> None:
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_output_dir = Path(args.model_output_dir)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     oof_candidates, oof_folds = build_oof_umaren_candidate_frame(
         train_df,
@@ -668,8 +680,8 @@ def main() -> None:
         raise ValueError("Umaren strategy OOF split is empty.")
 
     raw_id_suffix = "_norawid" if args.drop_raw_ids else ""
-    tuning_model_path = output_path.parent / f"lgbm_umaren_strategy_tuning{raw_id_suffix}.txt"
-    final_model_path = output_path.parent / f"lgbm_umaren_strategy_final{raw_id_suffix}.txt"
+    tuning_model_path = model_output_dir / f"lgbm_umaren_strategy_tuning{raw_id_suffix}.txt"
+    final_model_path = model_output_dir / f"lgbm_umaren_strategy_final{raw_id_suffix}.txt"
     tuning_booster = fit_umaren_strategy_booster(meta_train, meta_eval, umaren_feature_columns, tuning_model_path)
     tuning_rounds = int(tuning_booster.best_iteration or tuning_booster.current_iteration())
 
@@ -677,7 +689,7 @@ def main() -> None:
         train_df,
         validation_df,
         umaren_pair_frame,
-        output_path.parent,
+        model_output_dir,
         "umaren_validation",
         drop_raw_ids=args.drop_raw_ids,
         top_k=args.top_k,
@@ -717,7 +729,7 @@ def main() -> None:
         final_history_df,
         test_df,
         umaren_pair_frame,
-        output_path.parent,
+        model_output_dir,
         "umaren_test",
         drop_raw_ids=args.drop_raw_ids,
         top_k=args.top_k,
@@ -742,6 +754,12 @@ def main() -> None:
         "top_k": args.top_k,
         "oof_start_year": args.oof_start_year,
         "selector_holdout_years": args.selector_holdout_years,
+        "model_artifacts": {
+            "directory": str(model_output_dir),
+            "tuning_model": str(tuning_model_path),
+            "final_model": str(final_model_path),
+            "final_features": str(build_feature_metadata_path(final_model_path)),
+        },
         "umaren_feature_count": len(umaren_feature_columns),
         "umaren_feature_columns": umaren_feature_columns,
         "umaren_strategy_tuning_rounds": tuning_rounds,
