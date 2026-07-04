@@ -20,6 +20,7 @@ if str(MODEL_DIR) not in sys.path:
 from project_paths import EVALUATIONS_DIR  # noqa: E402
 from temporal_evaluate import (  # noqa: E402
     _apply_edge_policy,
+    _edge_policy_name,
     _iter_edge_policies,
     _summarize_pick_subset,
     apply_probability_calibrator,
@@ -28,6 +29,7 @@ from temporal_evaluate import (  # noqa: E402
     select_period,
 )
 from trainer import (  # noqa: E402
+    AVAILABILITY_CONTRACT_CHOICES,
     DEFAULT_DATA_PATH,
     cast_categoricals,
     filter_to_single_winner_races,
@@ -76,12 +78,14 @@ def _train_scored_frames(
     test_df: pd.DataFrame,
     score_col: str,
     drop_raw_ids: bool,
+    availability_contract: str | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int]:
     feature_columns = select_feature_columns(
         train_df,
         "TargetWin",
         drop_raw_ids=drop_raw_ids,
         include_market_features=True,
+        availability_contract=availability_contract,
     )
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -136,17 +140,7 @@ def _select_best_edge_policy(
         validation_selected = _apply_edge_policy(validation_picks, policy)
         validation_results.append(
             {
-                "policy_name": (
-                    "disagreement_edge"
-                    if policy.get("disagreement_only") and policy.get("edge_threshold") is not None
-                    else "edge_only"
-                    if policy.get("edge_threshold") is not None
-                    else "disagreement_only"
-                    if policy.get("disagreement_only")
-                    else "edge_band"
-                    if policy.get("edge_min") is not None or policy.get("edge_max") is not None
-                    else "all_races"
-                ),
+                "policy_name": _edge_policy_name(policy),
                 "bet_count": int(len(validation_selected)),
                 "selection_rate": float(len(validation_selected) / total_validation_bets) if total_validation_bets else 0.0,
                 "edge_threshold": policy.get("edge_threshold"),
@@ -157,15 +151,9 @@ def _select_best_edge_policy(
             }
         )
 
-    minimum_bets = (
-        min(
-            len(validation_picks),
-            max(min_bets_floor, int(np.ceil(len(validation_picks) * min_bets_ratio))),
-        )
-        if len(validation_picks)
-        else 0
-    )
+    minimum_bets = max(min_bets_floor, int(np.ceil(len(validation_picks) * min_bets_ratio))) if len(validation_picks) else 0
     eligible = [row for row in validation_results if row["bet_count"] >= minimum_bets]
+    has_eligible_validation_policy = bool(eligible)
     if not eligible:
         eligible = validation_results
     best_validation = max(
@@ -187,6 +175,7 @@ def _select_best_edge_policy(
     )
     return {
         "minimum_validation_bets": int(minimum_bets),
+        "has_eligible_validation_policy": has_eligible_validation_policy,
         "validation_all_races_metrics": _summarize_pick_subset(validation_picks),
         "test_all_races_metrics": _summarize_pick_subset(test_picks),
         "validation_best_policy": best_validation,
@@ -200,6 +189,67 @@ def _select_best_edge_policy(
             "disagreement_only": best_validation["disagreement_only"],
             "metrics": _summarize_pick_subset(test_selected),
         },
+    }
+
+
+def _policy_dict_from_result(policy_result: dict[str, object]) -> dict[str, object]:
+    return {
+        "disagreement_only": bool(policy_result.get("disagreement_only", False)),
+        "edge_threshold": policy_result.get("edge_threshold"),
+        "edge_min": policy_result.get("edge_min"),
+        "edge_max": policy_result.get("edge_max"),
+    }
+
+
+def _candidate_validation_sort_key(row: dict[str, object]) -> tuple[float, int, float]:
+    metrics = row["validation_best_policy"]["metrics"]
+    return (
+        float(metrics["win_return_rate"]),
+        int(row["validation_best_policy"]["bet_count"]),
+        float(metrics["win_hit_rate"]),
+    )
+
+
+def _candidate_test_sort_key(row: dict[str, object]) -> tuple[float, int, float]:
+    metrics = row["test_applied_policy"]["metrics"]
+    return (
+        float(metrics["win_return_rate"]),
+        int(row["test_applied_policy"]["bet_count"]),
+        float(metrics["win_hit_rate"]),
+    )
+
+
+def _summarize_pick_groups(picks: pd.DataFrame, group_label: str) -> list[dict[str, object]]:
+    if picks.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for label, group in picks.groupby(group_label, sort=True):
+        row: dict[str, object] = {group_label: label}
+        row.update(_summarize_pick_subset(group))
+        rows.append(row)
+    return rows
+
+
+def _build_selected_pick_slices(picks: pd.DataFrame) -> dict[str, list[dict[str, object]]]:
+    if picks.empty:
+        return {
+            "by_year": [],
+            "by_month": [],
+            "by_favorite_agreement": [],
+        }
+
+    sliced = picks.copy()
+    race_dates = pd.to_datetime(sliced["RaceDate"], errors="coerce")
+    sliced["year"] = race_dates.dt.year.astype("Int64").astype("string").fillna("UNKNOWN")
+    sliced["month"] = race_dates.dt.strftime("%Y-%m").fillna("UNKNOWN")
+    if "AgreesWithFavorite" in sliced.columns:
+        sliced["favorite_agreement"] = np.where(sliced["AgreesWithFavorite"], "agree", "disagree")
+    else:
+        sliced["favorite_agreement"] = "UNKNOWN"
+    return {
+        "by_year": _summarize_pick_groups(sliced, "year"),
+        "by_month": _summarize_pick_groups(sliced, "month"),
+        "by_favorite_agreement": _summarize_pick_groups(sliced, "favorite_agreement"),
     }
 
 
@@ -248,6 +298,14 @@ def build_candidate_summary(
             )
             test_metrics = policy_summary["test_applied_policy"]["metrics"]
             validation_metrics = policy_summary["validation_best_policy"]["metrics"]
+            validation_selected = _apply_edge_policy(
+                validation_band,
+                _policy_dict_from_result(policy_summary["validation_best_policy"]),
+            )
+            test_selected = _apply_edge_policy(
+                test_band,
+                _policy_dict_from_result(policy_summary["validation_best_policy"]),
+            )
             rows.append(
                 {
                     "calibration_method": method,
@@ -258,37 +316,57 @@ def build_candidate_summary(
                     "validation_pool_bets": int(len(validation_band)),
                     "test_pool_bets": int(len(test_band)),
                     "minimum_validation_bets": int(policy_summary["minimum_validation_bets"]),
+                    "has_eligible_validation_policy": bool(policy_summary["has_eligible_validation_policy"]),
                     "validation_all_races_metrics": policy_summary["validation_all_races_metrics"],
                     "test_all_races_metrics": policy_summary["test_all_races_metrics"],
                     "validation_best_policy": policy_summary["validation_best_policy"],
                     "test_applied_policy": policy_summary["test_applied_policy"],
+                    "validation_selected_slices": _build_selected_pick_slices(validation_selected),
+                    "test_selected_slices": _build_selected_pick_slices(test_selected),
                     "return_rate_gap_test_minus_validation": float(
                         test_metrics["win_return_rate"] - validation_metrics["win_return_rate"]
                     ),
-                    "eligible_for_workflow": bool(test_metrics["win_return_rate"] >= workflow_return_threshold),
+                    "eligible_for_workflow": bool(
+                        policy_summary["has_eligible_validation_policy"]
+                        and validation_metrics["win_return_rate"] >= workflow_return_threshold
+                    ),
+                    "validation_return_threshold_met": bool(
+                        validation_metrics["win_return_rate"] >= workflow_return_threshold
+                    ),
+                    "test_return_threshold_met": bool(test_metrics["win_return_rate"] >= workflow_return_threshold),
                 }
             )
 
-    rows_sorted = sorted(
-        rows,
-        key=lambda row: (
-            row["test_applied_policy"]["metrics"]["win_return_rate"],
-            row["test_applied_policy"]["bet_count"],
-            row["test_applied_policy"]["metrics"]["win_hit_rate"],
-        ),
-        reverse=True,
-    )
+    rows_by_validation = sorted(rows, key=_candidate_validation_sort_key, reverse=True)
+    deployable_rows_by_validation = [
+        row for row in rows_by_validation if row["has_eligible_validation_policy"]
+    ]
+    rows_by_test = sorted(rows, key=_candidate_test_sort_key, reverse=True)
     return {
         "workflow_return_threshold": float(workflow_return_threshold),
-        "candidate_count": int(len(rows_sorted)),
-        "best_by_test_return": rows_sorted[0] if rows_sorted else None,
+        "candidate_count": int(len(rows_by_validation)),
+        "deployable_candidate_count": int(len(deployable_rows_by_validation)),
+        "best_by_validation": deployable_rows_by_validation[0] if deployable_rows_by_validation else None,
+        "diagnostic_best_by_validation_any_sample": rows_by_validation[0] if rows_by_validation else None,
+        "ex_post_best_by_test_return": rows_by_test[0] if rows_by_test else None,
+        "best_by_test_return": rows_by_test[0] if rows_by_test else None,
         "best_by_method": {
-            method: next((row for row in rows_sorted if row["calibration_method"] == method), None)
+            method: next(
+                (row for row in deployable_rows_by_validation if row["calibration_method"] == method),
+                None,
+            )
             for method in CALIBRATION_METHODS
         },
-        "workflow_eligible_candidates": [row for row in rows_sorted if row["eligible_for_workflow"]],
-        "all_candidates": rows_sorted,
-        "top_candidates": rows_sorted[:15],
+        "workflow_eligible_candidates": [
+            row for row in deployable_rows_by_validation if row["eligible_for_workflow"]
+        ],
+        "ex_post_test_return_threshold_met_candidates": [
+            row for row in rows_by_test if row["test_return_threshold_met"]
+        ],
+        "all_candidates": rows_by_validation,
+        "deployable_candidates": deployable_rows_by_validation,
+        "top_candidates": deployable_rows_by_validation[:15],
+        "top_candidates_by_test_return": rows_by_test[:15],
     }
 
 
@@ -305,6 +383,12 @@ def main() -> None:
     parser.add_argument("--test-start", default="2025-01-01")
     parser.add_argument("--test-end", default="2026-12-31")
     parser.add_argument("--drop-raw-ids", action="store_true")
+    parser.add_argument(
+        "--availability-contract",
+        choices=AVAILABILITY_CONTRACT_CHOICES,
+        default="late_market",
+        help="Restrict model features to a deployment-time availability contract.",
+    )
     parser.add_argument("--min-bets-ratio", type=float, default=0.05)
     parser.add_argument("--min-bets-floor", type=int, default=100)
     parser.add_argument("--workflow-return-threshold", type=float, default=100.0)
@@ -333,11 +417,13 @@ def main() -> None:
         test_df,
         score_col=score_col,
         drop_raw_ids=args.drop_raw_ids,
+        availability_contract=args.availability_contract,
     )
 
     result = {
         "data_path": str(Path(args.data)),
         "drop_raw_ids": bool(args.drop_raw_ids),
+        "availability_contract": args.availability_contract,
         "periods": {
             "train": {"start": args.train_start, "end": args.train_end},
             "validation": {"start": args.validation_start, "end": args.validation_end},
