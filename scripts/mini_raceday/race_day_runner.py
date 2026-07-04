@@ -16,6 +16,11 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
+
 JST = timezone(timedelta(hours=9))
 TERMINAL_STATUSES = {"predicted_complete", "predicted_partial", "failed_final"}
 EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION = 1
@@ -407,7 +412,12 @@ def run_prediction_attempt(
 
 
 def validate_package(package_dir: Path) -> None:
-    required = ["model.txt", "features.json", "prediction_base_weekend.csv", "racekeys_weekend.txt", "manifest.json"]
+    required = [
+        *PACKAGE_MODEL_ARTIFACTS.required_names(),
+        "prediction_base_weekend.csv",
+        "racekeys_weekend.txt",
+        "manifest.json",
+    ]
     missing = [name for name in required if not (package_dir / name).exists()]
     if missing:
         raise FileNotFoundError(f"Package is missing required files: {missing}")
@@ -417,12 +427,17 @@ def validate_package(package_dir: Path) -> None:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Package manifest is invalid JSON: {manifest_path}") from exc
     schema_version = manifest.get("schema_version")
+    manifest_type = manifest.get("manifest_type")
+    artifacts = manifest.get("artifacts")
+    if schema_version is None and manifest_type is None and isinstance(artifacts, dict):
+        model_name, features_name = PACKAGE_MODEL_ARTIFACTS.required_names()
+        if artifacts.get("model") == model_name and artifacts.get("features") == features_name:
+            return
     if schema_version != EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION:
         raise ValueError(
             "Unsupported package manifest schema_version: "
             f"{schema_version!r}. Expected {EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION}."
         )
-    manifest_type = manifest.get("manifest_type")
     if manifest_type != EXPECTED_PACKAGE_MANIFEST_TYPE:
         raise ValueError(
             f"Unsupported package manifest_type: {manifest_type!r}. Expected {EXPECTED_PACKAGE_MANIFEST_TYPE!r}."

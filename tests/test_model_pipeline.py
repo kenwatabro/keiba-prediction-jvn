@@ -25,6 +25,13 @@ from temporal_evaluate import (  # noqa: E402
     summarize_selective_policy,
 )
 from trainer import (  # noqa: E402
+    CATEGORICAL_COLS,
+    FEATURE_DISPLAY_NAMES,
+    FEATURE_GROUP_DEFINITIONS,
+    MARKET_FEATURE_COLS,
+    NON_FEATURE_COLS,
+    POLICY_ONLY_COLS,
+    RAW_ID_FEATURE_COLS,
     build_explanation_metadata,
     build_feature_metadata_path,
     cast_categoricals,
@@ -34,6 +41,7 @@ from trainer import (  # noqa: E402
     summarize_single_winner_filter,
     train_model,
 )
+from model.feature_registry import FEATURE_REGISTRY  # noqa: E402
 
 
 def build_training_dataframe() -> pd.DataFrame:
@@ -123,6 +131,18 @@ def build_ranking_training_dataframe() -> pd.DataFrame:
 
 
 class ModelPipelineTests(unittest.TestCase):
+    def test_trainer_feature_contract_comes_from_registry(self):
+        self.assertIs(NON_FEATURE_COLS, FEATURE_REGISTRY.non_feature_columns)
+        self.assertIs(MARKET_FEATURE_COLS, FEATURE_REGISTRY.market_feature_columns)
+        self.assertIs(POLICY_ONLY_COLS, FEATURE_REGISTRY.policy_only_columns)
+        self.assertIs(RAW_ID_FEATURE_COLS, FEATURE_REGISTRY.raw_id_feature_columns)
+        self.assertEqual(CATEGORICAL_COLS, list(FEATURE_REGISTRY.categorical_columns))
+        self.assertIs(FEATURE_DISPLAY_NAMES, FEATURE_REGISTRY.display_names)
+        self.assertEqual(
+            FEATURE_GROUP_DEFINITIONS,
+            {group_name: list(columns) for group_name, columns in FEATURE_REGISTRY.groups.items()},
+        )
+
     def test_explanation_metadata_includes_priority_display_names(self):
         priority_columns = [
             "NyusenTosu",

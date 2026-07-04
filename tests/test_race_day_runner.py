@@ -102,6 +102,24 @@ class RaceDayRunnerTests(unittest.TestCase):
 
             validate_package(package_dir)
 
+    def test_validate_package_accepts_legacy_weekend_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "weekend_20260501"
+            self.write_minimal_package(
+                package_dir,
+                manifest={
+                    "package_id": "weekend_20260501",
+                    "artifacts": {
+                        "model": "model.txt",
+                        "features": "features.json",
+                        "prediction_base": "prediction_base_weekend.csv",
+                        "racekeys": "racekeys_weekend.txt",
+                    },
+                },
+            )
+
+            validate_package(package_dir)
+
     def test_validate_package_rejects_missing_manifest_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             package_dir = Path(temp_dir) / "weekend_20260501"
