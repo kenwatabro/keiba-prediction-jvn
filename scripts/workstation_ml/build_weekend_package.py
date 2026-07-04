@@ -21,7 +21,12 @@ sys.path.insert(0, str(PREPROCESSING_DIR))
 sys.path.insert(0, str(DATA_LOADER_DIR))
 
 from make_dataset import DEFAULT_RAW_DIR, make_dataset, make_prediction_dataset  # noqa: E402
-from trainer import build_explanation_metadata, build_feature_metadata_path, train_model  # noqa: E402
+from trainer import (  # noqa: E402
+    AVAILABILITY_CONTRACT_CHOICES,
+    build_explanation_metadata,
+    build_feature_metadata_path,
+    train_model,
+)
 from audit_raw_coverage import build_coverage_report  # noqa: E402
 from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
 from project_paths import PACKAGES_DIR, default_train_data_path  # noqa: E402
@@ -212,6 +217,7 @@ def build_or_copy_model(args: argparse.Namespace, package_dir: Path) -> tuple[Pa
         objective_name=args.objective,
         drop_raw_ids=args.drop_raw_ids,
         include_market_features=args.include_market_features,
+        availability_contract=args.availability_contract,
     )
     features_path = build_feature_metadata_path(model_path)
     package_features_path = PACKAGE_MODEL_ARTIFACTS.features_path(package_dir)
@@ -324,6 +330,7 @@ def write_manifest(
             "objective": args.objective,
             "drop_raw_ids": bool(args.drop_raw_ids),
             "include_market_features": bool(args.include_market_features),
+            "availability_contract": args.availability_contract,
         },
         "prediction_base": {
             "source": str(Path(args.prediction_base_source)) if args.prediction_base_source else "built_from_raw",
@@ -410,6 +417,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--objective", default="binary", choices=["binary", "lambdarank"], help="LightGBM objective when training.")
     parser.add_argument("--drop-raw-ids", action="store_true", help="Exclude raw owner/jockey/trainer ID columns when training.")
     parser.add_argument("--include-market-features", action="store_true", help="Include market columns in the trained model.")
+    parser.add_argument(
+        "--availability-contract",
+        choices=AVAILABILITY_CONTRACT_CHOICES,
+        default=None,
+        help="Restrict trained model features to a deployment-time availability contract.",
+    )
     parser.add_argument("--include-o1", action="store_true", help="Include O1 odds snapshots when building datasets.")
     parser.add_argument("--include-wh", action="store_true", help="Include WH body-weight features when building datasets.")
     parser.add_argument("--include-hc", action="store_true", help="Include HC hanro workout features when building datasets.")

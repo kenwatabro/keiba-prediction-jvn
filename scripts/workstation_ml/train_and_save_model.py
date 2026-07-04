@@ -9,7 +9,7 @@ MODEL_DIR = PROJECT_ROOT / "src" / "model"
 sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(MODEL_DIR))
 
-from trainer import train_model  # noqa: E402
+from trainer import AVAILABILITY_CONTRACT_CHOICES, train_model  # noqa: E402
 from project_paths import MODELS_DIR, default_train_data_path  # noqa: E402
 
 
@@ -53,6 +53,12 @@ def main() -> None:
         action="store_true",
         help="Include market columns such as OddsDecimal and Ninki in the feature set.",
     )
+    parser.add_argument(
+        "--availability-contract",
+        choices=AVAILABILITY_CONTRACT_CHOICES,
+        default=None,
+        help="Restrict features to a deployment-time availability contract.",
+    )
     args = parser.parse_args()
 
     model_path = Path(args.model)
@@ -65,6 +71,7 @@ def main() -> None:
         objective_name=args.objective,
         drop_raw_ids=args.drop_raw_ids,
         include_market_features=args.include_market_features,
+        availability_contract=args.availability_contract,
     )
 
 

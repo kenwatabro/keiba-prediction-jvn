@@ -25,6 +25,7 @@ from temporal_evaluate import (  # noqa: E402
     summarize_selective_policy,
 )
 from trainer import (  # noqa: E402
+    AVAILABILITY_CONTRACT_CHOICES,
     CATEGORICAL_COLS,
     FEATURE_DISPLAY_NAMES,
     FEATURE_GROUP_DEFINITIONS,
@@ -137,6 +138,7 @@ class ModelPipelineTests(unittest.TestCase):
         self.assertIs(POLICY_ONLY_COLS, FEATURE_REGISTRY.policy_only_columns)
         self.assertIs(RAW_ID_FEATURE_COLS, FEATURE_REGISTRY.raw_id_feature_columns)
         self.assertEqual(CATEGORICAL_COLS, list(FEATURE_REGISTRY.categorical_columns))
+        self.assertEqual(AVAILABILITY_CONTRACT_CHOICES, list(FEATURE_REGISTRY.availability_contract_names()))
         self.assertIs(FEATURE_DISPLAY_NAMES, FEATURE_REGISTRY.display_names)
         self.assertEqual(
             FEATURE_GROUP_DEFINITIONS,
@@ -190,6 +192,8 @@ class ModelPipelineTests(unittest.TestCase):
             self.assertIsInstance(metadata["feature_columns"], list)
             self.assertEqual(metadata["target_column"], "Target")
             self.assertEqual(metadata["objective_name"], "binary")
+            self.assertIsNone(metadata["availability_contract"])
+            self.assertEqual(metadata["excluded_availability_groups"], [])
             self.assertEqual(metadata["explanation"]["method"], "lightgbm_pred_contrib")
             self.assertEqual(metadata["explanation"]["score_space"], "raw_margin")
             self.assertEqual(metadata["explanation"]["default_top_k"], 2)
@@ -304,6 +308,36 @@ class ModelPipelineTests(unittest.TestCase):
             self.assertNotIn("BanusiCode", feature_columns)
             self.assertNotIn("ChokyosiCode", feature_columns)
             self.assertNotIn("KisyuCode", feature_columns)
+
+    def test_training_records_availability_contract_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            train_csv = temp_root / "train_data.csv"
+            model_path = temp_root / "lgbm_friday.txt"
+
+            training_df = build_training_dataframe()
+            training_df.to_csv(train_csv, index=False)
+
+            train_model(
+                data_path=train_csv,
+                model_path=model_path,
+                include_market_features=True,
+                availability_contract="friday_no_market",
+            )
+
+            metadata = json.loads(build_feature_metadata_path(model_path).read_text(encoding="utf-8"))
+            feature_columns = metadata["feature_columns"]
+            self.assertEqual(metadata["availability_contract"], "friday_no_market")
+            self.assertFalse(metadata["include_market_features"])
+            self.assertEqual(
+                metadata["excluded_availability_groups"],
+                ["result_only", "race_day_weight", "race_day_weather", "late_market"],
+            )
+            self.assertNotIn("NyusenTosu", feature_columns)
+            self.assertNotIn("SyussoTosu", feature_columns)
+            self.assertNotIn("BaTaijyu", feature_columns)
+            self.assertNotIn("ZogenSa", feature_columns)
+            self.assertNotIn("TenkoBaba", feature_columns)
 
     def test_select_feature_columns_excludes_policy_only_columns(self):
         training_df = build_ranking_training_dataframe()
@@ -1229,6 +1263,46 @@ class ModelPipelineTests(unittest.TestCase):
 
         self.assertEqual(without_market, ["BaseFeature"])
         self.assertEqual(with_market, ["BaseFeature", "OddsDecimal", "Ninki"])
+
+    def test_select_feature_columns_applies_availability_contracts(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "RaceKey": "R1",
+                    "RaceDate": "2024-01-01",
+                    "BaseFeature": 1.0,
+                    "NyusenTosu": 12,
+                    "SyussoTosu": 12,
+                    "BaTaijyu": 480,
+                    "ZogenSa": 4,
+                    "TenkoCD": "1",
+                    "SibaBabaCD": "1",
+                    "DirtBabaCD": "1",
+                    "TenkoBaba": "101",
+                    "OddsDecimal": 3.2,
+                    "Ninki": 1,
+                    "TargetWin": 1,
+                }
+            ]
+        )
+
+        friday = select_feature_columns(
+            frame,
+            "TargetWin",
+            include_market_features=True,
+            availability_contract="friday_no_market",
+        )
+        race_day_weight = select_feature_columns(
+            frame,
+            "TargetWin",
+            include_market_features=True,
+            availability_contract="race_day_weight",
+        )
+        late_market = select_feature_columns(frame, "TargetWin", availability_contract="late_market")
+
+        self.assertEqual(friday, ["BaseFeature"])
+        self.assertEqual(race_day_weight, ["BaseFeature", "BaTaijyu", "ZogenSa"])
+        self.assertEqual(late_market, ["BaseFeature", "BaTaijyu", "ZogenSa", "OddsDecimal", "Ninki"])
 
 
 if __name__ == "__main__":

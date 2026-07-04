@@ -23,6 +23,7 @@ POLICY_ONLY_COLS = FEATURE_REGISTRY.policy_only_columns
 RAW_ID_FEATURE_COLS = FEATURE_REGISTRY.raw_id_feature_columns
 CATEGORICAL_COLS = list(FEATURE_REGISTRY.categorical_columns)
 OBJECTIVE_CHOICES = ["binary", "lambdarank"]
+AVAILABILITY_CONTRACT_CHOICES = list(FEATURE_REGISTRY.availability_contract_names())
 FEATURE_DISPLAY_NAMES = FEATURE_REGISTRY.display_names
 FEATURE_GROUP_DEFINITIONS = {
     group_name: list(columns)
@@ -44,13 +45,19 @@ def build_feature_metadata(
     objective_name: str,
     drop_raw_ids: bool = False,
     include_market_features: bool = False,
+    availability_contract: str | None = None,
 ) -> dict[str, object]:
     return {
         "feature_columns": feature_columns,
         "target_column": target_col,
         "objective_name": objective_name,
         "drop_raw_ids": drop_raw_ids,
-        "include_market_features": include_market_features,
+        "include_market_features": FEATURE_REGISTRY.should_include_market_features(
+            include_market_features=include_market_features,
+            availability_contract=availability_contract,
+        ),
+        "availability_contract": availability_contract,
+        "excluded_availability_groups": list(FEATURE_REGISTRY.excluded_availability_groups(availability_contract)),
         "explanation": build_explanation_metadata(feature_columns),
     }
 
@@ -127,6 +134,7 @@ def select_feature_columns(
     drop_raw_ids: bool = False,
     exclude_prefixes: list[str] | None = None,
     include_market_features: bool = False,
+    availability_contract: str | None = None,
 ) -> list[str]:
     return FEATURE_REGISTRY.select_columns(
         list(df.columns),
@@ -134,6 +142,7 @@ def select_feature_columns(
         drop_raw_ids=drop_raw_ids,
         exclude_prefixes=exclude_prefixes,
         include_market_features=include_market_features,
+        availability_contract=availability_contract,
     )
 
 
@@ -291,6 +300,7 @@ def train_model(
     objective_name: str = "binary",
     drop_raw_ids: bool = False,
     include_market_features: bool = False,
+    availability_contract: str | None = None,
 ):
     data_path = Path(data_path)
     model_path = Path(model_path)
@@ -321,6 +331,7 @@ def train_model(
         target_col,
         drop_raw_ids=drop_raw_ids,
         include_market_features=include_market_features,
+        availability_contract=availability_contract,
     )
     train_df, val_df = split_train_validation(df)
     bst = fit_booster(train_df, val_df, feature_columns, target_col, model_path, objective_name=objective_name)
@@ -334,6 +345,7 @@ def train_model(
                 objective_name,
                 drop_raw_ids=drop_raw_ids,
                 include_market_features=include_market_features,
+                availability_contract=availability_contract,
             ),
             ensure_ascii=True,
             indent=2,
@@ -386,6 +398,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Include market columns such as OddsDecimal and Ninki in the feature set.",
     )
+    parser.add_argument(
+        "--availability-contract",
+        choices=AVAILABILITY_CONTRACT_CHOICES,
+        default=None,
+        help="Restrict features to a deployment-time availability contract.",
+    )
     args = parser.parse_args()
 
     train_model(
@@ -395,4 +413,5 @@ if __name__ == "__main__":
         objective_name=args.objective,
         drop_raw_ids=args.drop_raw_ids,
         include_market_features=args.include_market_features,
+        availability_contract=args.availability_contract,
     )

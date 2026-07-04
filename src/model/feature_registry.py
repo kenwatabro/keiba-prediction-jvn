@@ -1,5 +1,9 @@
 from dataclasses import dataclass, field
 
+FRIDAY_NO_MARKET_CONTRACT = "friday_no_market"
+RACE_DAY_WEIGHT_CONTRACT = "race_day_weight"
+LATE_MARKET_CONTRACT = "late_market"
+
 
 @dataclass(frozen=True)
 class FeatureRegistry:
@@ -8,8 +12,41 @@ class FeatureRegistry:
     policy_only_columns: frozenset[str]
     raw_id_feature_columns: frozenset[str]
     categorical_columns: tuple[str, ...]
+    availability_groups: dict[str, frozenset[str]] = field(default_factory=dict)
+    availability_contract_exclusions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     display_names: dict[str, str] = field(default_factory=dict)
     groups: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def availability_contract_names(self) -> tuple[str, ...]:
+        return tuple(self.availability_contract_exclusions.keys())
+
+    def excluded_availability_groups(self, availability_contract: str | None) -> tuple[str, ...]:
+        if availability_contract is None:
+            return ()
+        if availability_contract not in self.availability_contract_exclusions:
+            valid = ", ".join(self.availability_contract_names())
+            raise ValueError(f"Unsupported availability contract: {availability_contract}. Valid values: {valid}")
+        return self.availability_contract_exclusions[availability_contract]
+
+    def excluded_availability_columns(self, availability_contract: str | None) -> frozenset[str]:
+        excluded: set[str] = set()
+        for group_name in self.excluded_availability_groups(availability_contract):
+            if group_name not in self.availability_groups:
+                raise ValueError(f"Availability group not found: {group_name}")
+            excluded.update(self.availability_groups[group_name])
+        return frozenset(excluded)
+
+    def should_include_market_features(
+        self,
+        include_market_features: bool = False,
+        availability_contract: str | None = None,
+    ) -> bool:
+        if availability_contract == LATE_MARKET_CONTRACT:
+            return True
+        if availability_contract is not None:
+            self.excluded_availability_groups(availability_contract)
+            return False
+        return include_market_features
 
     def select_columns(
         self,
@@ -18,9 +55,15 @@ class FeatureRegistry:
         drop_raw_ids: bool = False,
         exclude_prefixes: list[str] | None = None,
         include_market_features: bool = False,
+        availability_contract: str | None = None,
     ) -> list[str]:
         features = [col for col in columns if col not in self.non_feature_columns and col != target_col]
-        if not include_market_features:
+        availability_exclusions = self.excluded_availability_columns(availability_contract)
+        features = [col for col in features if col not in availability_exclusions]
+        if not self.should_include_market_features(
+            include_market_features=include_market_features,
+            availability_contract=availability_contract,
+        ):
             features = [col for col in features if col not in self.market_feature_columns]
         features = [col for col in features if col not in self.policy_only_columns]
         if drop_raw_ids:
@@ -86,6 +129,70 @@ FEATURE_REGISTRY = FeatureRegistry(
             "JCBeforeKisyuCode",
         }
     ),
+    availability_groups={
+        "friday_available": frozenset(),
+        "result_only": frozenset(
+            {
+                "NyusenTosu",
+                "SyussoTosu",
+            }
+        ),
+        "race_day_weight": frozenset(
+            {
+                "BaTaijyu",
+                "ZogenSa",
+                "WHAvailable",
+                "WHHappyoTimeMinutes",
+                "WHBaTaijyu",
+                "WHZogenSa",
+                "WHZogenSaAbs",
+                "WHBaTaijyuDiffFromSE",
+                "WHZogenSaDiffFromSE",
+            }
+        ),
+        "race_day_weather": frozenset(
+            {
+                "TenkoCD",
+                "SibaBabaCD",
+                "DirtBabaCD",
+                "TenkoBaba",
+                "WEHenkoID",
+                "WECurrentTenkoCD",
+                "WECurrentSibaBabaCD",
+                "WECurrentDirtBabaCD",
+                "WEPreviousTenkoCD",
+                "WEPreviousSibaBabaCD",
+                "WEPreviousDirtBabaCD",
+                "AVJiyuKubun",
+                "CCAfterTrackCD",
+                "CCBeforeTrackCD",
+                "CCJiyuCd",
+            }
+        ),
+        "late_market": frozenset(
+            {
+                "OddsDecimal",
+                "Ninki",
+            }
+        ),
+    },
+    availability_contract_exclusions={
+        FRIDAY_NO_MARKET_CONTRACT: (
+            "result_only",
+            "race_day_weight",
+            "race_day_weather",
+            "late_market",
+        ),
+        RACE_DAY_WEIGHT_CONTRACT: (
+            "result_only",
+            "race_day_weather",
+            "late_market",
+        ),
+        LATE_MARKET_CONTRACT: (
+            "result_only",
+            "race_day_weather",
+        ),
+    },
     categorical_columns=(
         "JyoCD",
         "YoubiCD",

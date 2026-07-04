@@ -17,8 +17,10 @@ sys.path.insert(0, str(SRC_DIR))
 
 from project_paths import EVALUATION_MODELS_DIR, EVALUATIONS_DIR  # noqa: E402
 from trainer import (
+    AVAILABILITY_CONTRACT_CHOICES,
     DEFAULT_DATA_PATH,
     OBJECTIVE_CHOICES,
+    build_feature_metadata,
     build_feature_metadata_path,
     cast_categoricals,
     filter_to_single_winner_races,
@@ -967,6 +969,7 @@ def train_and_evaluate_target(
     test_end: str | None,
     exclude_feature_prefixes: list[str] | None = None,
     eval_race_any_positive_columns: list[str] | None = None,
+    availability_contract: str | None = None,
 ) -> dict:
     feature_columns = select_feature_columns(
         df,
@@ -974,6 +977,7 @@ def train_and_evaluate_target(
         drop_raw_ids=drop_raw_ids,
         exclude_prefixes=exclude_feature_prefixes,
         include_market_features=include_market_features,
+        availability_contract=availability_contract,
     )
     raw_train_df = select_period(df, "train", train_start, train_end)
     raw_validation_df = select_period(df, "validation", validation_start, validation_end)
@@ -1000,12 +1004,27 @@ def train_and_evaluate_target(
     if validation_df["RaceDate"].max() >= test_df["RaceDate"].min():
         raise ValueError("Test period must start after the validation period.")
 
+    feature_metadata = build_feature_metadata(
+        feature_columns,
+        target_col,
+        objective_name,
+        drop_raw_ids=drop_raw_ids,
+        include_market_features=include_market_features,
+        availability_contract=availability_contract,
+    )
+    effective_include_market_features = bool(feature_metadata["include_market_features"])
     model_suffix = "" if objective_name == "binary" else f"_{objective_name}"
-    market_suffix = "_market" if include_market_features else ""
+    market_suffix = "_market" if effective_include_market_features else ""
     raw_id_suffix = "_norawid" if drop_raw_ids else ""
-    tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}.txt"
+    contract_suffix = f"_{availability_contract}" if availability_contract else ""
+    tuning_model_path = (
+        output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}{contract_suffix}.txt"
+    )
     if raw_id_suffix:
-        tuning_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}{raw_id_suffix}.txt"
+        tuning_model_path = (
+            output_dir
+            / f"lgbm_{target_col.lower()}_temporal_tuning{model_suffix}{market_suffix}{contract_suffix}{raw_id_suffix}.txt"
+        )
     tuning_booster = fit_booster(
         train_df,
         validation_df,
@@ -1014,9 +1033,12 @@ def train_and_evaluate_target(
         tuning_model_path,
         objective_name=objective_name,
     )
-    final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}.txt"
+    final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}{contract_suffix}.txt"
     if raw_id_suffix:
-        final_model_path = output_dir / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}{raw_id_suffix}.txt"
+        final_model_path = (
+            output_dir
+            / f"lgbm_{target_col.lower()}_temporal{model_suffix}{market_suffix}{contract_suffix}{raw_id_suffix}.txt"
+        )
     final_training_df = pd.concat([train_df, validation_df], ignore_index=True)
     final_booster = train_final_booster(
         final_training_df,
@@ -1029,13 +1051,7 @@ def train_and_evaluate_target(
     metadata_path = build_feature_metadata_path(final_model_path)
     metadata_path.write_text(
         json.dumps(
-            {
-                "feature_columns": feature_columns,
-                "target_column": target_col,
-                "objective_name": objective_name,
-                "drop_raw_ids": drop_raw_ids,
-                "include_market_features": include_market_features,
-            },
+            feature_metadata,
             ensure_ascii=True,
             indent=2,
         ),
@@ -1069,7 +1085,10 @@ def train_and_evaluate_target(
         "target": target_col,
         "objective_name": objective_name,
         "drop_raw_ids": drop_raw_ids,
-        "include_market_features": include_market_features,
+        "include_market_features": effective_include_market_features,
+        "requested_include_market_features": include_market_features,
+        "availability_contract": availability_contract,
+        "excluded_availability_groups": list(feature_metadata["excluded_availability_groups"]),
         "model_path": str(final_model_path),
         "feature_count": len(feature_columns),
         "single_winner_filter": single_winner_filter,
@@ -1082,7 +1101,7 @@ def train_and_evaluate_target(
         "test": summarize_scored_period(test_eval, target_col, score_col, objective_name),
         "selective_policy": summarize_selective_policy(validation_eval, test_eval, score_col),
     }
-    if include_market_features and objective_name == "binary" and target_col == "TargetWin":
+    if effective_include_market_features and objective_name == "binary" and target_col == "TargetWin":
         result["edge_diagnostics"] = {
             "validation": summarize_edge_diagnostics(validation_eval, score_col),
             "test": summarize_edge_diagnostics(test_eval, score_col),
@@ -1142,6 +1161,12 @@ def main() -> None:
         help="Include market columns such as OddsDecimal and Ninki in training and evaluation.",
     )
     parser.add_argument(
+        "--availability-contract",
+        choices=AVAILABILITY_CONTRACT_CHOICES,
+        default=None,
+        help="Restrict features to a deployment-time availability contract.",
+    )
+    parser.add_argument(
         "--exclude-feature-prefix",
         action="append",
         default=[],
@@ -1170,6 +1195,7 @@ def main() -> None:
     result = {
         "data_path": str(data_path),
         "coverage": coverage,
+        "availability_contract": args.availability_contract,
         "periods": {
             "train": {"start": args.train_start, "end": args.train_end},
             "validation": {"start": args.validation_start, "end": args.validation_end},
@@ -1192,6 +1218,7 @@ def main() -> None:
             args.test_end,
             exclude_feature_prefixes=args.exclude_feature_prefix,
             eval_race_any_positive_columns=args.eval_race_any_positive_column,
+            availability_contract=args.availability_contract,
         )
         result["win_model"] = train_and_evaluate_target(
             df,
@@ -1208,6 +1235,7 @@ def main() -> None:
             args.test_end,
             exclude_feature_prefixes=args.exclude_feature_prefix,
             eval_race_any_positive_columns=args.eval_race_any_positive_column,
+            availability_contract=args.availability_contract,
         )
     except ValueError as exc:
         result["error"] = str(exc)

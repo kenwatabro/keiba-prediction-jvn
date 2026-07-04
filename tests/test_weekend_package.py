@@ -104,6 +104,7 @@ def build_args(temp_root: Path) -> argparse.Namespace:
         objective="binary",
         drop_raw_ids=True,
         include_market_features=False,
+        availability_contract=None,
         include_o1=False,
         include_wh=False,
         include_hc=False,
@@ -136,6 +137,7 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertEqual(manifest["manifest_type"], "weekend_package")
             self.assertEqual(manifest["package_id"], "weekend_20260501")
             self.assertEqual(manifest["training"]["mode"], "copied")
+            self.assertIsNone(manifest["training"]["availability_contract"])
             self.assertIn("raw_coverage", manifest)
             self.assertIn("train_coverage", manifest)
             self.assertIn("prediction_coverage", manifest)
