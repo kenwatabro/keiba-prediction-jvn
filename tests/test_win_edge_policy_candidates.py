@@ -9,7 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from analyze_win_edge_policy_candidates import build_candidate_summary, build_walk_forward_summary  # noqa: E402
+from analyze_win_edge_policy_candidates import (  # noqa: E402
+    build_candidate_summary,
+    build_oof_walk_forward_summary,
+    build_walk_forward_summary,
+)
 
 
 def build_scored_frame(year: int) -> pd.DataFrame:
@@ -149,6 +153,33 @@ class WinEdgePolicyCandidateTests(unittest.TestCase):
         )
         self.assertEqual(aggregate_races, expected_races)
         self.assertEqual(int(summary["evaluated_application_years"]), 2)
+
+    def test_oof_walk_forward_summary_uses_seed_years_before_application_start(self):
+        scored = pd.concat(
+            [
+                build_scored_frame(2018),
+                build_scored_frame(2019),
+                build_scored_frame(2020),
+            ],
+            ignore_index=True,
+        )
+
+        summary = build_oof_walk_forward_summary(
+            scored,
+            score_col="Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=1,
+            workflow_return_threshold=100.0,
+            application_start_year=2020,
+            allowed_calibration_methods=["raw"],
+            allowed_odds_band_names=["3to10"],
+            allowed_policy_names=["edge_only"],
+        )
+
+        self.assertEqual(summary["oof_scored_years"], [2018, 2019, 2020])
+        self.assertEqual(summary["selection_seed_years"], [2018, 2019])
+        self.assertEqual(summary["application_years_evaluated"], [2020])
+        self.assertEqual([row["application_year"] for row in summary["application_years"]], [2020])
 
 
 if __name__ == "__main__":

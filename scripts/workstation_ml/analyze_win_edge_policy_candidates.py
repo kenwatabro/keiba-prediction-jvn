@@ -36,6 +36,7 @@ from trainer import (  # noqa: E402
     fit_booster,
     load_training_frame,
     select_feature_columns,
+    split_train_validation,
     train_final_booster,
 )
 
@@ -115,6 +116,73 @@ def _train_scored_frames(
         test_scored = test_df.copy()
         test_scored[score_col] = final_booster.predict(cast_categoricals(test_scored, feature_columns))
     return validation_scored, test_scored, feature_columns, tuning_rounds
+
+
+def _score_oof_years(
+    df: pd.DataFrame,
+    score_col: str,
+    drop_raw_ids: bool,
+    availability_contract: str | None,
+    oof_start_year: int,
+) -> tuple[pd.DataFrame, list[dict[str, object]], list[str]]:
+    feature_columns = select_feature_columns(
+        df,
+        "TargetWin",
+        drop_raw_ids=drop_raw_ids,
+        include_market_features=True,
+        availability_contract=availability_contract,
+    )
+    years = sorted(df["RaceDate"].dt.year.dropna().astype(int).unique().tolist())
+    scored_folds: list[pd.DataFrame] = []
+    fold_summaries: list[dict[str, object]] = []
+    with tempfile.TemporaryDirectory() as temp_dir:
+        model_dir = Path(temp_dir)
+        for year in years:
+            if year < oof_start_year:
+                continue
+            history_df = df.loc[df["RaceDate"] < pd.Timestamp(f"{year}-01-01")].copy()
+            eval_df = df.loc[df["RaceDate"].dt.year.eq(year)].copy()
+            if history_df.empty or eval_df.empty:
+                continue
+
+            tune_train, tune_eval = split_train_validation(history_df)
+            tuning_model_path = model_dir / f"win_edge_oof_{year}_tuning.txt"
+            final_model_path = model_dir / f"win_edge_oof_{year}_final.txt"
+            tuning_booster = fit_booster(
+                tune_train,
+                tune_eval,
+                feature_columns,
+                "TargetWin",
+                tuning_model_path,
+                objective_name="binary",
+            )
+            tuning_rounds = int(tuning_booster.best_iteration or tuning_booster.current_iteration())
+            final_booster = train_final_booster(
+                history_df,
+                feature_columns,
+                "TargetWin",
+                final_model_path,
+                tuning_rounds,
+                objective_name="binary",
+            )
+            scored_fold = eval_df.copy()
+            scored_fold[score_col] = final_booster.predict(cast_categoricals(scored_fold, feature_columns))
+            scored_folds.append(scored_fold)
+            fold_summaries.append(
+                {
+                    "year": int(year),
+                    "history_rows": int(len(history_df)),
+                    "history_races": int(history_df["RaceKey"].nunique()),
+                    "eval_rows": int(len(eval_df)),
+                    "eval_races": int(eval_df["RaceKey"].nunique()),
+                    "feature_count": int(len(feature_columns)),
+                    "tuning_rounds": tuning_rounds,
+                }
+            )
+
+    if not scored_folds:
+        return pd.DataFrame(), fold_summaries, feature_columns
+    return pd.concat(scored_folds, ignore_index=True), fold_summaries, feature_columns
 
 
 def _apply_odds_band(picks: pd.DataFrame, band: dict[str, float | str]) -> pd.DataFrame:
@@ -573,6 +641,66 @@ def build_walk_forward_summary(
     }
 
 
+def build_oof_walk_forward_summary(
+    oof_scored: pd.DataFrame,
+    score_col: str,
+    min_bets_ratio: float,
+    min_bets_floor: int,
+    workflow_return_threshold: float,
+    application_start_year: int | None = None,
+    allowed_calibration_methods: list[str] | None = None,
+    allowed_odds_band_names: list[str] | None = None,
+    allowed_policy_names: list[str] | None = None,
+) -> dict[str, object]:
+    if oof_scored.empty:
+        raise ValueError("OOF scored frame is empty.")
+
+    race_dates = pd.to_datetime(oof_scored["RaceDate"], errors="coerce")
+    years = sorted(int(year) for year in race_dates.dt.year.dropna().unique().tolist())
+    if len(years) < 2:
+        raise ValueError("At least two OOF years are required for walk-forward application.")
+
+    first_application_year = application_start_year or years[1]
+    if first_application_year <= years[0]:
+        raise ValueError(
+            "application_start_year must leave at least one earlier OOF year for policy selection."
+        )
+
+    selection_seed = oof_scored.loc[race_dates.dt.year.lt(first_application_year)].copy()
+    application = oof_scored.loc[race_dates.dt.year.ge(first_application_year)].copy()
+    if selection_seed.empty or application.empty:
+        raise ValueError("OOF selection seed or application period is empty.")
+
+    summary = build_walk_forward_summary(
+        selection_seed,
+        application,
+        score_col=score_col,
+        min_bets_ratio=min_bets_ratio,
+        min_bets_floor=min_bets_floor,
+        workflow_return_threshold=workflow_return_threshold,
+        allowed_calibration_methods=allowed_calibration_methods,
+        allowed_odds_band_names=allowed_odds_band_names,
+        allowed_policy_names=allowed_policy_names,
+    )
+    selection_dates = pd.to_datetime(selection_seed["RaceDate"], errors="coerce")
+    application_dates = pd.to_datetime(application["RaceDate"], errors="coerce")
+    summary.update(
+        {
+            "oof_scored_years": years,
+            "selection_seed_years": sorted(
+                int(year) for year in selection_dates.dt.year.dropna().unique().tolist()
+            ),
+            "application_start_year": int(first_application_year),
+            "application_years_evaluated": sorted(
+                int(year) for year in application_dates.dt.year.dropna().unique().tolist()
+            ),
+            "oof_rows": int(len(oof_scored)),
+            "oof_races": int(oof_scored["RaceKey"].nunique()),
+        }
+    )
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare deployable win edge-policy candidates across calibration methods and picked-horse odds bands."
@@ -595,6 +723,29 @@ def main() -> None:
     parser.add_argument("--min-bets-ratio", type=float, default=0.05)
     parser.add_argument("--min-bets-floor", type=int, default=100)
     parser.add_argument("--workflow-return-threshold", type=float, default=100.0)
+    parser.add_argument(
+        "--oof-start-year",
+        type=int,
+        default=None,
+        help="If set, score each year from this year using only prior years and add an OOF rolling summary.",
+    )
+    parser.add_argument(
+        "--oof-scored-input",
+        default=None,
+        help="Use a previously saved OOF scored CSV instead of retraining yearly OOF models.",
+    )
+    parser.add_argument(
+        "--oof-scored-output",
+        default=None,
+        help="Save OOF scored rows to this CSV for faster follow-up policy analysis.",
+    )
+    parser.add_argument(
+        "--oof-application-start-year",
+        type=int,
+        default=None,
+        help="First OOF year to treat as application. Defaults to the second scored OOF year.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Write JSON to --output without printing the full payload.")
     parser.add_argument(
         "--allowed-calibration",
         action="append",
@@ -689,8 +840,48 @@ def main() -> None:
             allowed_policy_names=args.allowed_policy_name,
         ),
     }
+    if args.oof_start_year is not None or args.oof_scored_input is not None:
+        if args.oof_scored_input:
+            oof_scored = load_training_frame(Path(args.oof_scored_input))
+            oof_folds: list[dict[str, object]] = []
+            oof_feature_columns: list[str] = []
+        else:
+            oof_source_df = filter_to_single_winner_races(
+                select_period(df, "oof", args.train_start, args.test_end)
+            )
+            oof_scored, oof_folds, oof_feature_columns = _score_oof_years(
+                oof_source_df,
+                score_col=score_col,
+                drop_raw_ids=args.drop_raw_ids,
+                availability_contract=args.availability_contract,
+                oof_start_year=args.oof_start_year,
+            )
+        if args.oof_scored_output:
+            oof_scored_output_path = Path(args.oof_scored_output)
+            oof_scored_output_path.parent.mkdir(parents=True, exist_ok=True)
+            oof_scored.to_csv(oof_scored_output_path, index=False)
+        result["oof_rolling_summary"] = {
+            "oof_start_year": int(args.oof_start_year) if args.oof_start_year is not None else None,
+            "oof_scored_input": args.oof_scored_input,
+            "oof_scored_output": args.oof_scored_output,
+            "oof_application_start_year": args.oof_application_start_year,
+            "feature_count": int(len(oof_feature_columns)),
+            "folds": oof_folds,
+            "summary": build_oof_walk_forward_summary(
+                oof_scored,
+                score_col=score_col,
+                min_bets_ratio=args.min_bets_ratio,
+                min_bets_floor=args.min_bets_floor,
+                workflow_return_threshold=args.workflow_return_threshold,
+                application_start_year=args.oof_application_start_year,
+                allowed_calibration_methods=args.allowed_calibration,
+                allowed_odds_band_names=args.allowed_odds_band,
+                allowed_policy_names=args.allowed_policy_name,
+            ),
+        }
     output_path.write_text(json.dumps(result, ensure_ascii=True, indent=2, default=_json_default), encoding="utf-8")
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))
+    if not args.quiet:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))
 
 
 if __name__ == "__main__":
