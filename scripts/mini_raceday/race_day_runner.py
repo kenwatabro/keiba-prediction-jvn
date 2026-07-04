@@ -427,12 +427,17 @@ def validate_package(package_dir: Path) -> None:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Package manifest is invalid JSON: {manifest_path}") from exc
     schema_version = manifest.get("schema_version")
+    manifest_type = manifest.get("manifest_type")
+    artifacts = manifest.get("artifacts")
+    if schema_version is None and manifest_type is None and isinstance(artifacts, dict):
+        model_name, features_name = PACKAGE_MODEL_ARTIFACTS.required_names()
+        if artifacts.get("model") == model_name and artifacts.get("features") == features_name:
+            return
     if schema_version != EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION:
         raise ValueError(
             "Unsupported package manifest schema_version: "
             f"{schema_version!r}. Expected {EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION}."
         )
-    manifest_type = manifest.get("manifest_type")
     if manifest_type != EXPECTED_PACKAGE_MANIFEST_TYPE:
         raise ValueError(
             f"Unsupported package manifest_type: {manifest_type!r}. Expected {EXPECTED_PACKAGE_MANIFEST_TYPE!r}."
