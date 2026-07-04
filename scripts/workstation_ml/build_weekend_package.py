@@ -23,6 +23,7 @@ sys.path.insert(0, str(DATA_LOADER_DIR))
 from make_dataset import DEFAULT_RAW_DIR, make_dataset, make_prediction_dataset  # noqa: E402
 from trainer import build_explanation_metadata, build_feature_metadata_path, train_model  # noqa: E402
 from audit_raw_coverage import build_coverage_report  # noqa: E402
+from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
 from project_paths import PACKAGES_DIR, default_train_data_path  # noqa: E402
 
 
@@ -165,9 +166,9 @@ def write_racekeys(prediction_path: Path, racekeys_path: Path) -> list[str]:
 
 
 def copy_model_artifacts(model_source: Path, features_source: Path, package_dir: Path) -> tuple[Path, Path]:
-    model_path = package_dir / "model.txt"
-    features_path = package_dir / "features.json"
-    model_metadata_path = build_feature_metadata_path(model_path)
+    model_path = PACKAGE_MODEL_ARTIFACTS.model_path(package_dir)
+    features_path = PACKAGE_MODEL_ARTIFACTS.features_path(package_dir)
+    model_metadata_path = PACKAGE_MODEL_ARTIFACTS.model_metadata_path(package_dir)
     if model_source.resolve() != model_path.resolve():
         shutil.copy2(model_source, model_path)
     if features_source.resolve() != features_path.resolve():
@@ -203,7 +204,7 @@ def build_or_copy_model(args: argparse.Namespace, package_dir: Path) -> tuple[Pa
     if not train_data.exists():
         raise FileNotFoundError(f"Training data not found: {train_data}")
 
-    model_path = package_dir / "model.txt"
+    model_path = PACKAGE_MODEL_ARTIFACTS.model_path(package_dir)
     train_model(
         data_path=train_data,
         model_path=model_path,
@@ -213,7 +214,7 @@ def build_or_copy_model(args: argparse.Namespace, package_dir: Path) -> tuple[Pa
         include_market_features=args.include_market_features,
     )
     features_path = build_feature_metadata_path(model_path)
-    package_features_path = package_dir / "features.json"
+    package_features_path = PACKAGE_MODEL_ARTIFACTS.features_path(package_dir)
     shutil.copy2(features_path, package_features_path)
     return model_path, package_features_path
 

@@ -16,6 +16,11 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
+
 JST = timezone(timedelta(hours=9))
 TERMINAL_STATUSES = {"predicted_complete", "predicted_partial", "failed_final"}
 EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION = 1
@@ -407,7 +412,12 @@ def run_prediction_attempt(
 
 
 def validate_package(package_dir: Path) -> None:
-    required = ["model.txt", "features.json", "prediction_base_weekend.csv", "racekeys_weekend.txt", "manifest.json"]
+    required = [
+        *PACKAGE_MODEL_ARTIFACTS.required_names(),
+        "prediction_base_weekend.csv",
+        "racekeys_weekend.txt",
+        "manifest.json",
+    ]
     missing = [name for name in required if not (package_dir / name).exists()]
     if missing:
         raise FileNotFoundError(f"Package is missing required files: {missing}")

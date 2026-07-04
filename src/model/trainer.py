@@ -12,158 +12,21 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
 from project_paths import MODELS_DIR, default_train_data_path  # noqa: E402
+from model.feature_registry import FEATURE_REGISTRY  # noqa: E402
 
 DEFAULT_DATA_PATH = default_train_data_path()
 DEFAULT_MODEL_PATH = MODELS_DIR / "lgbm_model.txt"
 DEFAULT_TARGET_COL = "TargetTop3"
-NON_FEATURE_COLS = {
-    "RaceKey",
-    "RaceDate",
-    "Bamei",
-    "KettoNum",
-    "KakuteiJyuni",
-    "Target",
-    "TargetTop3",
-    "TargetWin",
-}
-MARKET_FEATURE_COLS = {
-    "OddsDecimal",
-    "Ninki",
-}
-POLICY_ONLY_COLS = {
-    "JyokenName",
-    "FutanBefore",
-    "Blinker",
-    "KisyuCodeBefore",
-    "MinaraiCDBefore",
-    "KyakusituKubun",
-}
-RAW_ID_FEATURE_COLS = {
-    "BanusiCode",
-    "ChokyosiCode",
-    "KisyuCode",
-    "JCAfterKisyuCode",
-    "JCBeforeKisyuCode",
-}
-CATEGORICAL_COLS = [
-    "JyoCD",
-    "YoubiCD",
-    "GradeCD",
-    "JyuryoCD",
-    "JyokenCD1",
-    "JyokenCD2",
-    "JyokenCD3",
-    "JyokenCD4",
-    "JyokenCD5",
-    "DistanceBucket",
-    "TrackCD",
-    "CourseKubunCD",
-    "TenkoCD",
-    "SibaBabaCD",
-    "DirtBabaCD",
-    "TenkoBaba",
-    "UmaKigoCD",
-    "SexCD",
-    "HinsyuCD",
-    "KeiroCD",
-    "TozaiCD",
-    "ChokyosiCode",
-    "BanusiCode",
-    "KisyuCode",
-    "MinaraiCD",
-    "WEHenkoID",
-    "WECurrentTenkoCD",
-    "WECurrentSibaBabaCD",
-    "WECurrentDirtBabaCD",
-    "WEPreviousTenkoCD",
-    "WEPreviousSibaBabaCD",
-    "WEPreviousDirtBabaCD",
-    "AVJiyuKubun",
-    "JCAfterKisyuCode",
-    "JCBeforeKisyuCode",
-    "JCAfterMinaraiCD",
-    "JCBeforeMinaraiCD",
-    "CCAfterTrackCD",
-    "CCBeforeTrackCD",
-    "CCJiyuCd",
-    "HCLastTresenKubun",
-    "WCLastCourse",
-    "WCLastBabaAround",
-    "WCLastTresenKubun",
-]
+NON_FEATURE_COLS = FEATURE_REGISTRY.non_feature_columns
+MARKET_FEATURE_COLS = FEATURE_REGISTRY.market_feature_columns
+POLICY_ONLY_COLS = FEATURE_REGISTRY.policy_only_columns
+RAW_ID_FEATURE_COLS = FEATURE_REGISTRY.raw_id_feature_columns
+CATEGORICAL_COLS = list(FEATURE_REGISTRY.categorical_columns)
 OBJECTIVE_CHOICES = ["binary", "lambdarank"]
-FEATURE_DISPLAY_NAMES = {
-    "HorseWinRateBefore": "馬_勝率",
-    "HorseTop3RateBefore": "馬_複勝率",
-    "HorseAvgFinishPctBefore": "馬_平均着順率",
-    "HorseLast3AvgFinishPct": "馬_近3走平均着順率",
-    "HorseLast1FinishPct": "馬_前走着順率",
-    "HorseLast3Top3Rate": "馬_近3走複勝率",
-    "HorseLast3BestFinish": "馬_近3走最高着順",
-    "HorseStartsBefore": "馬_出走数",
-    "JockeyWinRateBefore": "騎手_勝率",
-    "JockeyTop3RateBefore": "騎手_複勝率",
-    "TrainerWinRateBefore": "調教師_勝率",
-    "TrainerTop3RateBefore": "調教師_複勝率",
-    "OwnerTop3RateSmoothBefore": "馬主_補正複勝率",
-    "HorseRecentAvgFinish": "馬_近走平均着順",
-    "HorseRecentTop3Rate": "馬_近走複勝率",
-    "HorseRecentWinRate": "馬_近走勝率",
-    "DistanceBucketTop3RateBefore": "距離帯_複勝率",
-    "DistanceBucketWinRateBefore": "距離帯_勝率",
-    "WeightDelta": "馬体重増減",
-    "Futan": "斤量",
-    "Barei": "馬齢",
-    "Wakuban": "枠番",
-    "Umaban": "馬番",
-    "NyusenTosu": "入線頭数",
-    "TorokuTosu": "登録頭数",
-    "SyussoTosu": "出走頭数",
-    "BaTaijyu": "馬体重",
-    "ZogenSa": "馬体重増減",
-    "JyoCD": "競馬場",
-    "MinaraiCD": "見習区分",
-    "TozaiCD": "東西",
-    "Kyori": "距離",
-    "OddsDecimal": "オッズ",
-    "Ninki": "人気",
-    "WHZogenSa": "当日馬体重増減",
-}
+FEATURE_DISPLAY_NAMES = FEATURE_REGISTRY.display_names
 FEATURE_GROUP_DEFINITIONS = {
-    "horse_form": [
-        "HorseWinRateBefore",
-        "HorseTop3RateBefore",
-        "HorseRecentAvgFinish",
-        "HorseRecentTop3Rate",
-        "HorseRecentWinRate",
-    ],
-    "jockey": [
-        "JockeyWinRateBefore",
-        "JockeyTop3RateBefore",
-    ],
-    "trainer": [
-        "TrainerWinRateBefore",
-        "TrainerTop3RateBefore",
-    ],
-    "race_context": [
-        "JyoCD",
-        "GradeCD",
-        "Kyori",
-        "DistanceBucket",
-        "TrackCD",
-        "CourseKubunCD",
-        "TenkoBaba",
-    ],
-    "market": [
-        "OddsDecimal",
-        "Ninki",
-    ],
-    "race_day": [
-        "WHZogenSa",
-        "WECurrentTenkoCD",
-        "WECurrentSibaBabaCD",
-        "WECurrentDirtBabaCD",
-    ],
+    group_name: list(columns)
+    for group_name, columns in FEATURE_REGISTRY.groups.items()
 }
 
 
@@ -172,22 +35,7 @@ def build_feature_metadata_path(model_path: Path) -> Path:
 
 
 def build_explanation_metadata(feature_columns: list[str], default_top_k: int = 2) -> dict[str, object]:
-    feature_set = set(feature_columns)
-    return {
-        "method": "lightgbm_pred_contrib",
-        "score_space": "raw_margin",
-        "default_top_k": default_top_k,
-        "feature_display_names": {
-            column: display_name
-            for column, display_name in FEATURE_DISPLAY_NAMES.items()
-            if column in feature_set
-        },
-        "feature_groups": {
-            group_name: [column for column in columns if column in feature_set]
-            for group_name, columns in FEATURE_GROUP_DEFINITIONS.items()
-            if any(column in feature_set for column in columns)
-        },
-    }
+    return FEATURE_REGISTRY.explanation_metadata(feature_columns, default_top_k=default_top_k)
 
 
 def build_feature_metadata(
@@ -280,15 +128,13 @@ def select_feature_columns(
     exclude_prefixes: list[str] | None = None,
     include_market_features: bool = False,
 ) -> list[str]:
-    features = [col for col in df.columns if col not in NON_FEATURE_COLS and col != target_col]
-    if not include_market_features:
-        features = [col for col in features if col not in MARKET_FEATURE_COLS]
-    features = [col for col in features if col not in POLICY_ONLY_COLS]
-    if drop_raw_ids:
-        features = [col for col in features if col not in RAW_ID_FEATURE_COLS]
-    if exclude_prefixes:
-        features = [col for col in features if not any(col.startswith(prefix) for prefix in exclude_prefixes)]
-    return features
+    return FEATURE_REGISTRY.select_columns(
+        list(df.columns),
+        target_col,
+        drop_raw_ids=drop_raw_ids,
+        exclude_prefixes=exclude_prefixes,
+        include_market_features=include_market_features,
+    )
 
 
 def cast_categoricals(frame: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:

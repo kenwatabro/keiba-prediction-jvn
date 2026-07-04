@@ -20,6 +20,7 @@ from build_weekend_package import (  # noqa: E402
     validate_prediction_base,
     write_racekeys,
 )
+from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
 
 
 def build_args(temp_root: Path) -> argparse.Namespace:
@@ -120,9 +121,9 @@ class WeekendPackageTests(unittest.TestCase):
 
             self.assertEqual(package_dir.name, "weekend_20260501")
             self.assertTrue(tarball_path.exists())
-            self.assertTrue((package_dir / "model.txt").exists())
-            self.assertTrue((package_dir / "features.json").exists())
-            self.assertTrue((package_dir / "model.features.json").exists())
+            self.assertTrue(PACKAGE_MODEL_ARTIFACTS.model_path(package_dir).exists())
+            self.assertTrue(PACKAGE_MODEL_ARTIFACTS.features_path(package_dir).exists())
+            self.assertTrue(PACKAGE_MODEL_ARTIFACTS.model_metadata_path(package_dir).exists())
             self.assertTrue((package_dir / "prediction_base_weekend.csv").exists())
             self.assertTrue((package_dir / "racekeys_weekend.txt").exists())
             self.assertTrue((package_dir / "manifest.json").exists())
@@ -140,14 +141,22 @@ class WeekendPackageTests(unittest.TestCase):
             self.assertIn("prediction_coverage", manifest)
             self.assertEqual(manifest["prediction_base"]["validation"]["rows"], 3)
             self.assertEqual(manifest["prediction_base"]["validation"]["race_count"], 2)
+            self.assertEqual(manifest["artifacts"]["model"], PACKAGE_MODEL_ARTIFACTS.model_name)
+            self.assertEqual(manifest["artifacts"]["features"], PACKAGE_MODEL_ARTIFACTS.features_name)
+            self.assertEqual(
+                manifest["artifacts"]["model_features_metadata"],
+                PACKAGE_MODEL_ARTIFACTS.model_metadata_path(package_dir).name,
+            )
             self.assertEqual(manifest["race_day_rules"]["retrain_on_race_day"], False)
             self.assertEqual(manifest["explanation"]["present"], True)
             self.assertEqual(manifest["explanation"]["method"], "lightgbm_pred_contrib")
             self.assertEqual(manifest["explanation"]["score_space"], "raw_margin")
             self.assertEqual(manifest["explanation"]["default_top_k"], 2)
 
-            features = json.loads((package_dir / "features.json").read_text(encoding="utf-8"))
-            model_features = json.loads((package_dir / "model.features.json").read_text(encoding="utf-8"))
+            features = json.loads(PACKAGE_MODEL_ARTIFACTS.features_path(package_dir).read_text(encoding="utf-8"))
+            model_features = json.loads(
+                PACKAGE_MODEL_ARTIFACTS.model_metadata_path(package_dir).read_text(encoding="utf-8")
+            )
             self.assertEqual(features["explanation"]["feature_display_names"], {"FeatureA": "feature_a"})
             self.assertEqual(model_features, features)
 

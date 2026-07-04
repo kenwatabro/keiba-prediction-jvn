@@ -1,8 +1,8 @@
 # Operations Pipeline Refactor Status
 
-Branch: `feature/ops-pipeline-refactor`
+Branch: `feature/step7-feature-model-registry`
 
-Last updated: 2026-05-09
+Last updated: 2026-07-04
 
 ## Goal
 
@@ -53,6 +53,10 @@ fetching, model development, packaging, and race-day operation.
   - Mini PC race-day scripts moved to `scripts/mini_raceday/`.
   - Compatibility wrappers remain under old `scripts/` paths and
     `scripts/windows/`.
+- [x] Completed Step 7 feature/model registry patterns:
+  - Feature additions should be localized.
+  - Model package artifact names are centralized for package building and
+    race-day validation.
 
 ## Verified
 
@@ -62,15 +66,8 @@ fetching, model development, packaging, and race-day operation.
 - [x] `bash -n scripts/build_and_send_weekend_package.sh`
 - [x] `bash -n scripts/sync_raw_from_windows.sh`
 - [x] `bash -n scripts/unpack_weekend_package.sh`
-
-## Not Started
-
-- [ ] Step 7: introduce feature/model registry patterns.
-  - Feature additions should be localized.
-  - Model additions should not require editing packaging code in multiple places.
-  - Start here next. Step 6 is complete enough that operational entry points
-    are separated by machine role while old paths remain as compatibility
-    wrappers.
+- [x] `venv/bin/python -m unittest tests.test_model_pipeline tests.test_weekend_package tests.test_race_day_runner tests.test_discord_notification`
+- [x] `venv/bin/python -m py_compile src/model/feature_registry.py src/model/model_registry.py src/model/trainer.py scripts/workstation_ml/build_weekend_package.py scripts/mini_raceday/race_day_runner.py scripts/mini_raceday/predict_today_netkeiba_weights.py`
 
 ## Deferred Decisions
 

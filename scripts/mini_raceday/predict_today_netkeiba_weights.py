@@ -15,11 +15,14 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = PROJECT_ROOT / "src"
 MODEL_DIR = PROJECT_ROOT / "src" / "model"
 PREPROCESSING_DIR = PROJECT_ROOT / "src" / "preprocessing"
+sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(MODEL_DIR))
 sys.path.insert(0, str(PREPROCESSING_DIR))
 
+from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
 from predictor import build_feature_metadata_path, load_feature_columns  # noqa: E402
 from trainer import cast_categoricals  # noqa: E402
 
@@ -142,7 +145,11 @@ def resolve_package_path(package_dir: str | None, filename: str) -> Path | None:
 
 
 def resolve_model_path(args: argparse.Namespace) -> Path:
-    model_path = Path(args.model) if args.model else resolve_package_path(args.package_dir, "model.txt")
+    model_path = (
+        Path(args.model)
+        if args.model
+        else resolve_package_path(args.package_dir, PACKAGE_MODEL_ARTIFACTS.model_name)
+    )
     if model_path is None:
         raise ValueError("Specify --model or --package-dir.")
     if not model_path.exists():
