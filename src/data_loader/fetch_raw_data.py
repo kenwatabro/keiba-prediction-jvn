@@ -102,6 +102,19 @@ def resolve_realtime_dataspec_config(dataspec: str) -> dict[str, str] | None:
     return REALTIME_JVRT_SPEC_CONFIG.get(dataspec.upper())
 
 
+def build_output_filename(
+    requested_spec: str,
+    start_date: str,
+    end_date: str,
+    realtime_key: str | None = None,
+    snapshot_label: str | None = None,
+) -> str:
+    if realtime_key is not None:
+        suffix = f"_{snapshot_label}" if snapshot_label else ""
+        return f"{requested_spec}_{realtime_key}{suffix}.txt"
+    return f"{requested_spec}_{start_date}_{end_date}.txt"
+
+
 def validate_realtime_request(
     requested_spec: str,
     rt_spec: str,
@@ -208,6 +221,8 @@ def fetch_data(
     allow_empty=False,
     filter_start_date=None,
     filter_end_date=None,
+    timestamp_output=False,
+    snapshot_label=None,
 ):
     logger = logging.getLogger(__name__)
     if JVLinkClient is None:
@@ -230,11 +245,20 @@ def fetch_data(
             end_date,
             rt_key,
         )
-        filename = f"{requested_spec}_{realtime_key}.txt"
+        realtime_snapshot_label = str(snapshot_label).strip() if snapshot_label else None
+        if timestamp_output and not realtime_snapshot_label:
+            realtime_snapshot_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = build_output_filename(
+            requested_spec,
+            start_date,
+            end_date,
+            realtime_key=realtime_key,
+            snapshot_label=realtime_snapshot_label,
+        )
     else:
         realtime_spec = None
         realtime_key = None
-        filename = f"{requested_spec}_{start_date}_{end_date}.txt"
+        filename = build_output_filename(requested_spec, start_date, end_date)
     filepath = output_path / filename
 
     if filepath.exists() and filepath.stat().st_size > 0 and not overwrite:
@@ -370,6 +394,8 @@ if __name__ == "__main__":
     parser.add_argument('--allow-empty', action='store_true', help='Treat missing data such as JVRTOpen -1 or JVOpen -1 as a warning instead of a fatal error')
     parser.add_argument('--filter-start', type=validate_date, default=None, help='Optional local post-filter start date YYYYMMDD when JVOpen uses a wider fetch window')
     parser.add_argument('--filter-end', type=validate_date, default=None, help='Optional local post-filter end date YYYYMMDD when JVOpen uses a wider fetch window')
+    parser.add_argument('--timestamp-output', action='store_true', help='For realtime specs, append a snapshot timestamp to the output filename')
+    parser.add_argument('--snapshot-label', default=None, help='Optional explicit realtime snapshot label for the output filename')
 
     args = parser.parse_args()
 
@@ -388,4 +414,6 @@ if __name__ == "__main__":
         args.allow_empty,
         args.filter_start,
         args.filter_end,
+        args.timestamp_output,
+        args.snapshot_label,
     )

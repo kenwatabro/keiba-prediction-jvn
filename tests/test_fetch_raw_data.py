@@ -13,6 +13,7 @@ sys.path.insert(0, str(DATA_LOADER_DIR))
 import fetch_raw_data  # noqa: E402
 from fetch_raw_data import (  # noqa: E402
     build_jvopen_from_time,
+    build_output_filename,
     normalize_option,
     resolve_dataspec,
     resolve_realtime_dataspec_config,
@@ -67,6 +68,24 @@ class FetchRawDataTests(unittest.TestCase):
             {"dataspec": "0B31", "key_mode": "race_key"},
         )
         self.assertIsNone(resolve_realtime_dataspec_config("RACE"))
+
+    def test_build_output_filename_for_historical_spec(self):
+        self.assertEqual(
+            build_output_filename("RACE", "20260705", "20260705"),
+            "RACE_20260705_20260705.txt",
+        )
+
+    def test_build_output_filename_for_timestamped_realtime_spec(self):
+        self.assertEqual(
+            build_output_filename(
+                "O1",
+                "20260705",
+                "20260705",
+                realtime_key="2026070506010101",
+                snapshot_label="20260705_100000",
+            ),
+            "O1_2026070506010101_20260705_100000.txt",
+        )
 
     def test_validate_dataspec_request_rejects_setup_mode_for_race_day_streams(self):
         with self.assertRaisesRegex(ValueError, "Use --option 2"):
@@ -173,6 +192,29 @@ class FetchRawDataTests(unittest.TestCase):
         self.assertEqual(path.name, "O1_2024010601010111.txt")
         lines = path.read_text(encoding="cp932").splitlines()
         self.assertEqual(lines, ["O1" + " " * 9 + "20240106" + "rest"])
+
+    def test_fetch_data_can_timestamp_realtime_output(self):
+        output_dir = self.make_output_dir("fetch_o1_timestamped")
+        client = FakeJVLinkClient(
+            open_result=FakeOpenResult(return_code=1, download_count=0),
+            read_results=[
+                FakeReadResult(return_code=1, line="O1" + " " * 9 + "20260705" + "rest"),
+                FakeReadResult(return_code=0),
+            ],
+        )
+        with patch.object(fetch_raw_data, "JVLinkClient", return_value=client):
+            path = fetch_raw_data.fetch_data(
+                "20260705",
+                "20260705",
+                dataspec="O1",
+                output_dir=output_dir,
+                overwrite=True,
+                rt_key="2026070506010101",
+                timestamp_output=True,
+                snapshot_label="20260705_100000",
+            )
+
+        self.assertEqual(path.name, "O1_2026070506010101_20260705_100000.txt")
 
     def test_fetch_data_can_treat_missing_realtime_snapshot_as_empty(self):
         output_dir = self.make_output_dir("fetch_empty_o1")

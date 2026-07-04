@@ -7,6 +7,7 @@ param(
     [string]$SavePath = "D:\JVLinkData",
     [bool]$Overwrite = $true,
     [bool]$AllowEmpty = $true,
+    [bool]$TimestampOutput = $true,
     [bool]$StopOnError = $false
 )
 
@@ -99,10 +100,14 @@ foreach ($raceKey in $raceKeys) {
     if ($AllowEmpty) {
         $args += "--allow-empty"
     }
+    if ($TimestampOutput) {
+        $args += "--timestamp-output"
+    }
 
     Write-Host ""
     Write-Host "=== Fetch O1 ($raceKey) ==="
     Write-Host "Python command: $PythonCommand"
+    Write-Host "Timestamp output: $TimestampOutput"
     Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
     $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
     & $PythonCommand @args

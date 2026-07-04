@@ -5,7 +5,8 @@ param(
     [string]$SavePath = "D:\JVLinkData",
     [string]$TargetDate = "",
     [bool]$Overwrite = $true,
-    [bool]$AllowEmpty = $true
+    [bool]$AllowEmpty = $true,
+    [bool]$TimestampOutput = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,10 +72,14 @@ if ($Overwrite) {
 if ($AllowEmpty) {
     $args += "--allow-empty"
 }
+if ($TimestampOutput) {
+    $args += "--timestamp-output"
+}
 
 Write-Host "=== Fetch WH ($TargetDate) ==="
 Write-Host "Python command: $PythonCommand"
 Write-Host "Allow empty realtime body-weight stream: $AllowEmpty"
+Write-Host "Timestamp output: $TimestampOutput"
 Write-Host "JVLINK_FORCE_DYNAMIC_DISPATCH=1"
 $env:JVLINK_FORCE_DYNAMIC_DISPATCH = "1"
 & $PythonCommand @args
