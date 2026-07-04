@@ -1,8 +1,8 @@
 # Operations Pipeline Refactor Status
 
-Branch: `feature/step7-feature-model-registry`
+Status: merged to `main`
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 ## Goal
 
@@ -83,10 +83,6 @@ fetching, model development, packaging, and race-day operation.
   - Current preference: avoid until full rebuild becomes too slow operationally.
 
 ## Known Caveats
-
-- Existing packages built before this refactor do not contain `schema_version`.
-  The updated race-day runner rejects those packages. Rebuild packages with the
-  updated code before using them with the updated runner.
 
 - `docs/` is mostly ignored by `.gitignore`, so any new tracked docs must be
   explicitly allowlisted there.
