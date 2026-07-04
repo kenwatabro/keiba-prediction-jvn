@@ -54,6 +54,8 @@ ODDS_BANDS = [
     {"name": "10plus", "min": 10.0},
     {"name": "15plus", "min": 15.0},
 ]
+ODDS_BAND_NAMES = [str(band["name"]) for band in ODDS_BANDS]
+EDGE_POLICY_NAMES = sorted({_edge_policy_name(policy) for policy in _iter_edge_policies()})
 
 
 def _json_default(value: object) -> object:
@@ -133,6 +135,7 @@ def _select_best_edge_policy(
     test_picks: pd.DataFrame,
     min_bets_ratio: float,
     min_bets_floor: int,
+    allowed_policy_names: list[str] | None = None,
 ) -> dict[str, object]:
     validation_results: list[dict[str, object]] = []
     total_validation_bets = len(validation_picks)
@@ -150,6 +153,19 @@ def _select_best_edge_policy(
                 "metrics": _summarize_pick_subset(validation_selected),
             }
         )
+
+    if allowed_policy_names:
+        requested_policy_names = list(dict.fromkeys(allowed_policy_names))
+        valid_policy_names = sorted({row["policy_name"] for row in validation_results})
+        invalid_policy_names = [name for name in requested_policy_names if name not in valid_policy_names]
+        if invalid_policy_names:
+            raise ValueError(
+                "Unknown edge policy names: "
+                f"{invalid_policy_names}. Valid options: {valid_policy_names}"
+            )
+        validation_results = [
+            row for row in validation_results if row["policy_name"] in requested_policy_names
+        ]
 
     minimum_bets = max(min_bets_floor, int(np.ceil(len(validation_picks) * min_bets_ratio))) if len(validation_picks) else 0
     eligible = [row for row in validation_results if row["bet_count"] >= minimum_bets]
@@ -260,9 +276,28 @@ def build_candidate_summary(
     min_bets_ratio: float,
     min_bets_floor: int,
     workflow_return_threshold: float,
+    allowed_calibration_methods: list[str] | None = None,
+    allowed_odds_band_names: list[str] | None = None,
+    allowed_policy_names: list[str] | None = None,
 ) -> dict[str, object]:
     rows: list[dict[str, object]] = []
-    for method in CALIBRATION_METHODS:
+    method_names = list(dict.fromkeys(allowed_calibration_methods or CALIBRATION_METHODS))
+    invalid_methods = [method for method in method_names if method not in CALIBRATION_METHODS]
+    if invalid_methods:
+        raise ValueError(f"Unknown calibration methods: {invalid_methods}. Valid options: {CALIBRATION_METHODS}")
+
+    odds_band_names = list(dict.fromkeys(allowed_odds_band_names or ODDS_BAND_NAMES))
+    invalid_band_names = [name for name in odds_band_names if name not in ODDS_BAND_NAMES]
+    if invalid_band_names:
+        raise ValueError(f"Unknown odds band names: {invalid_band_names}. Valid options: {ODDS_BAND_NAMES}")
+    allowed_band_name_set = set(odds_band_names)
+
+    policy_names = list(dict.fromkeys(allowed_policy_names or EDGE_POLICY_NAMES))
+    invalid_policy_names = [name for name in policy_names if name not in EDGE_POLICY_NAMES]
+    if invalid_policy_names:
+        raise ValueError(f"Unknown edge policy names: {invalid_policy_names}. Valid options: {EDGE_POLICY_NAMES}")
+
+    for method in method_names:
         if method == "raw":
             validation_method = validation_scored.copy()
             test_method = test_scored.copy()
@@ -286,6 +321,8 @@ def build_candidate_summary(
         validation_picks = build_market_edge_pick_frame(validation_method, method_score_col)
         test_picks = build_market_edge_pick_frame(test_method, method_score_col)
         for band in ODDS_BANDS:
+            if band["name"] not in allowed_band_name_set:
+                continue
             validation_band = _apply_odds_band(validation_picks, band)
             test_band = _apply_odds_band(test_picks, band)
             if validation_band.empty:
@@ -295,6 +332,7 @@ def build_candidate_summary(
                 test_band,
                 min_bets_ratio=min_bets_ratio,
                 min_bets_floor=min_bets_floor,
+                allowed_policy_names=policy_names,
             )
             test_metrics = policy_summary["test_applied_policy"]["metrics"]
             validation_metrics = policy_summary["validation_best_policy"]["metrics"]
@@ -367,6 +405,171 @@ def build_candidate_summary(
         "deployable_candidates": deployable_rows_by_validation,
         "top_candidates": deployable_rows_by_validation[:15],
         "top_candidates_by_test_return": rows_by_test[:15],
+        "filters": {
+            "calibration_methods": method_names,
+            "odds_band_names": odds_band_names,
+            "policy_names": policy_names,
+        },
+    }
+
+
+def _period_summary(frame: pd.DataFrame) -> dict[str, object]:
+    if frame.empty:
+        return {
+            "rows": 0,
+            "races": 0,
+            "date_min": None,
+            "date_max": None,
+        }
+    race_dates = pd.to_datetime(frame["RaceDate"], errors="coerce")
+    return {
+        "rows": int(len(frame)),
+        "races": int(frame["RaceKey"].nunique()),
+        "date_min": race_dates.min().date().isoformat() if race_dates.notna().any() else None,
+        "date_max": race_dates.max().date().isoformat() if race_dates.notna().any() else None,
+    }
+
+
+def _compact_candidate(row: dict[str, object] | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    validation_policy = row["validation_best_policy"]
+    test_policy = row["test_applied_policy"]
+    return {
+        "calibration_method": row["calibration_method"],
+        "score_column": row["score_column"],
+        "odds_band_name": row["odds_band_name"],
+        "odds_min": row.get("odds_min"),
+        "odds_max": row.get("odds_max"),
+        "validation_pool_bets": int(row["validation_pool_bets"]),
+        "test_pool_bets": int(row["test_pool_bets"]),
+        "minimum_validation_bets": int(row["minimum_validation_bets"]),
+        "has_eligible_validation_policy": bool(row["has_eligible_validation_policy"]),
+        "validation_policy": {
+            "policy_name": validation_policy["policy_name"],
+            "bet_count": int(validation_policy["bet_count"]),
+            "selection_rate": float(validation_policy["selection_rate"]),
+            "edge_threshold": validation_policy.get("edge_threshold"),
+            "edge_min": validation_policy.get("edge_min"),
+            "edge_max": validation_policy.get("edge_max"),
+            "disagreement_only": bool(validation_policy.get("disagreement_only", False)),
+            "metrics": validation_policy["metrics"],
+        },
+        "application_policy": {
+            "policy_name": test_policy["policy_name"],
+            "bet_count": int(test_policy["bet_count"]),
+            "selection_rate": float(test_policy["selection_rate"]),
+            "edge_threshold": test_policy.get("edge_threshold"),
+            "edge_min": test_policy.get("edge_min"),
+            "edge_max": test_policy.get("edge_max"),
+            "disagreement_only": bool(test_policy.get("disagreement_only", False)),
+            "metrics": test_policy["metrics"],
+        },
+        "return_rate_gap_application_minus_validation": float(row["return_rate_gap_test_minus_validation"]),
+        "eligible_for_workflow": bool(row["eligible_for_workflow"]),
+        "validation_return_threshold_met": bool(row["validation_return_threshold_met"]),
+        "application_return_threshold_met": bool(row["test_return_threshold_met"]),
+    }
+
+
+def _aggregate_application_metrics(rows: list[dict[str, object]]) -> dict[str, float]:
+    total_bets = 0
+    total_win_hits = 0.0
+    total_top3_hits = 0.0
+    total_gross_return = 0.0
+    for row in rows:
+        candidate = row.get("selected_candidate")
+        if not candidate:
+            continue
+        metrics = candidate["application_policy"]["metrics"]
+        bet_count = int(candidate["application_policy"]["bet_count"])
+        total_bets += bet_count
+        total_win_hits += float(metrics["win_hit_rate"]) * bet_count
+        total_top3_hits += float(metrics["top3_hit_rate"]) * bet_count
+        total_gross_return += float(metrics["win_return_rate"]) / 100.0 * bet_count * 100.0
+
+    stake = total_bets * 100.0
+    return {
+        "races": int(total_bets),
+        "win_hit_rate": float(total_win_hits / total_bets) if total_bets else 0.0,
+        "top3_hit_rate": float(total_top3_hits / total_bets) if total_bets else 0.0,
+        "win_return_rate": float(total_gross_return / stake * 100.0) if stake else 0.0,
+    }
+
+
+def build_walk_forward_summary(
+    validation_scored: pd.DataFrame,
+    test_scored: pd.DataFrame,
+    score_col: str,
+    min_bets_ratio: float,
+    min_bets_floor: int,
+    workflow_return_threshold: float,
+    allowed_calibration_methods: list[str] | None = None,
+    allowed_odds_band_names: list[str] | None = None,
+    allowed_policy_names: list[str] | None = None,
+) -> dict[str, object]:
+    test_dates = pd.to_datetime(test_scored["RaceDate"], errors="coerce")
+    test_years = sorted(int(year) for year in test_dates.dt.year.dropna().unique().tolist())
+    rows: list[dict[str, object]] = []
+    scored_history = validation_scored.copy()
+
+    for application_year in test_years:
+        application_mask = test_dates.dt.year.eq(application_year)
+        application_scored = test_scored.loc[application_mask].copy()
+        if application_scored.empty or scored_history.empty:
+            continue
+
+        candidate_summary = build_candidate_summary(
+            scored_history,
+            application_scored,
+            score_col=score_col,
+            min_bets_ratio=min_bets_ratio,
+            min_bets_floor=min_bets_floor,
+            workflow_return_threshold=workflow_return_threshold,
+            allowed_calibration_methods=allowed_calibration_methods,
+            allowed_odds_band_names=allowed_odds_band_names,
+            allowed_policy_names=allowed_policy_names,
+        )
+        rows.append(
+            {
+                "application_year": int(application_year),
+                "selection_period": _period_summary(scored_history),
+                "application_period": _period_summary(application_scored),
+                "candidate_count": int(candidate_summary["candidate_count"]),
+                "deployable_candidate_count": int(candidate_summary["deployable_candidate_count"]),
+                "selected_candidate": _compact_candidate(candidate_summary["best_by_validation"]),
+                "diagnostic_best_by_validation_any_sample": _compact_candidate(
+                    candidate_summary["diagnostic_best_by_validation_any_sample"]
+                ),
+                "ex_post_best_by_application_return": _compact_candidate(
+                    candidate_summary["ex_post_best_by_test_return"]
+                ),
+                "workflow_eligible_candidate_count": len(candidate_summary["workflow_eligible_candidates"]),
+            }
+        )
+        scored_history = pd.concat([scored_history, application_scored], ignore_index=True)
+
+    application_returns = [
+        float(row["selected_candidate"]["application_policy"]["metrics"]["win_return_rate"])
+        for row in rows
+        if row.get("selected_candidate")
+    ]
+    return {
+        "workflow_return_threshold": float(workflow_return_threshold),
+        "min_bets_ratio": float(min_bets_ratio),
+        "min_bets_floor": int(min_bets_floor),
+        "application_years": rows,
+        "aggregate_application_metrics": _aggregate_application_metrics(rows),
+        "profitable_application_years": int(
+            sum(return_rate >= workflow_return_threshold for return_rate in application_returns)
+        ),
+        "evaluated_application_years": int(len(application_returns)),
+        "minimum_year_return_rate": min(application_returns) if application_returns else None,
+        "filters": {
+            "calibration_methods": list(dict.fromkeys(allowed_calibration_methods or CALIBRATION_METHODS)),
+            "odds_band_names": list(dict.fromkeys(allowed_odds_band_names or ODDS_BAND_NAMES)),
+            "policy_names": list(dict.fromkeys(allowed_policy_names or EDGE_POLICY_NAMES)),
+        },
     }
 
 
@@ -392,6 +595,27 @@ def main() -> None:
     parser.add_argument("--min-bets-ratio", type=float, default=0.05)
     parser.add_argument("--min-bets-floor", type=int, default=100)
     parser.add_argument("--workflow-return-threshold", type=float, default=100.0)
+    parser.add_argument(
+        "--allowed-calibration",
+        action="append",
+        choices=CALIBRATION_METHODS,
+        default=None,
+        help="Restrict candidate search to one or more calibration methods.",
+    )
+    parser.add_argument(
+        "--allowed-odds-band",
+        action="append",
+        choices=ODDS_BAND_NAMES,
+        default=None,
+        help="Restrict candidate search to one or more picked-horse odds bands.",
+    )
+    parser.add_argument(
+        "--allowed-policy-name",
+        action="append",
+        choices=EDGE_POLICY_NAMES,
+        default=None,
+        help="Restrict candidate search to one or more edge policy families.",
+    )
     args = parser.parse_args()
 
     output_path = Path(args.output)
@@ -437,6 +661,11 @@ def main() -> None:
         "test_races": int(test_scored["RaceKey"].nunique()),
         "min_bets_ratio": float(args.min_bets_ratio),
         "min_bets_floor": int(args.min_bets_floor),
+        "candidate_filters": {
+            "calibration_methods": args.allowed_calibration or CALIBRATION_METHODS,
+            "odds_band_names": args.allowed_odds_band or ODDS_BAND_NAMES,
+            "policy_names": args.allowed_policy_name or EDGE_POLICY_NAMES,
+        },
         "candidate_summary": build_candidate_summary(
             validation_scored,
             test_scored,
@@ -444,6 +673,20 @@ def main() -> None:
             min_bets_ratio=args.min_bets_ratio,
             min_bets_floor=args.min_bets_floor,
             workflow_return_threshold=args.workflow_return_threshold,
+            allowed_calibration_methods=args.allowed_calibration,
+            allowed_odds_band_names=args.allowed_odds_band,
+            allowed_policy_names=args.allowed_policy_name,
+        ),
+        "walk_forward_summary": build_walk_forward_summary(
+            validation_scored,
+            test_scored,
+            score_col=score_col,
+            min_bets_ratio=args.min_bets_ratio,
+            min_bets_floor=args.min_bets_floor,
+            workflow_return_threshold=args.workflow_return_threshold,
+            allowed_calibration_methods=args.allowed_calibration,
+            allowed_odds_band_names=args.allowed_odds_band,
+            allowed_policy_names=args.allowed_policy_name,
         ),
     }
     output_path.write_text(json.dumps(result, ensure_ascii=True, indent=2, default=_json_default), encoding="utf-8")

@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from analyze_win_edge_policy_candidates import build_candidate_summary  # noqa: E402
+from analyze_win_edge_policy_candidates import build_candidate_summary, build_walk_forward_summary  # noqa: E402
 
 
 def build_scored_frame(year: int) -> pd.DataFrame:
@@ -87,6 +87,68 @@ class WinEdgePolicyCandidateTests(unittest.TestCase):
         self.assertIn("by_year", best["test_selected_slices"])
         self.assertIn("by_month", best["test_selected_slices"])
         self.assertIn("by_favorite_agreement", best["test_selected_slices"])
+
+    def test_candidate_summary_respects_candidate_allowlists(self):
+        validation = build_scored_frame(2024)
+        test = build_scored_frame(2025)
+
+        summary = build_candidate_summary(
+            validation,
+            test,
+            score_col="Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=1,
+            workflow_return_threshold=100.0,
+            allowed_calibration_methods=["raw"],
+            allowed_odds_band_names=["3to10"],
+            allowed_policy_names=["edge_only"],
+        )
+
+        self.assertEqual(summary["filters"]["calibration_methods"], ["raw"])
+        self.assertEqual(summary["filters"]["odds_band_names"], ["3to10"])
+        self.assertEqual(summary["filters"]["policy_names"], ["edge_only"])
+        self.assertEqual({row["calibration_method"] for row in summary["all_candidates"]}, {"raw"})
+        self.assertEqual({row["odds_band_name"] for row in summary["all_candidates"]}, {"3to10"})
+        self.assertEqual(
+            {row["validation_best_policy"]["policy_name"] for row in summary["all_candidates"]},
+            {"edge_only"},
+        )
+
+    def test_walk_forward_summary_selects_on_prior_years_and_aggregates_applications(self):
+        validation = build_scored_frame(2024)
+        test = pd.concat(
+            [
+                build_scored_frame(2025),
+                build_scored_frame(2026),
+            ],
+            ignore_index=True,
+        )
+
+        summary = build_walk_forward_summary(
+            validation,
+            test,
+            score_col="Score",
+            min_bets_ratio=0.0,
+            min_bets_floor=1,
+            workflow_return_threshold=100.0,
+            allowed_calibration_methods=["raw"],
+            allowed_odds_band_names=["3to10"],
+            allowed_policy_names=["edge_only"],
+        )
+
+        years = summary["application_years"]
+        self.assertEqual([row["application_year"] for row in years], [2025, 2026])
+        self.assertEqual(years[0]["selection_period"]["date_min"], "2024-01-01")
+        self.assertEqual(years[1]["selection_period"]["date_max"], "2025-04-01")
+        self.assertTrue(all(row["selected_candidate"] for row in years))
+
+        aggregate_races = int(summary["aggregate_application_metrics"]["races"])
+        expected_races = sum(
+            int(row["selected_candidate"]["application_policy"]["bet_count"])
+            for row in years
+        )
+        self.assertEqual(aggregate_races, expected_races)
+        self.assertEqual(int(summary["evaluated_application_years"]), 2)
 
 
 if __name__ == "__main__":
