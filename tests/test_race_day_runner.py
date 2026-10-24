@@ -21,6 +21,7 @@ from race_day_runner import (  # noqa: E402
     build_schedule,
     classify_monitor,
     load_state,
+    mark_past_races_skipped,
     notify_operational_error_once,
     run_prediction_attempt,
     should_attempt,
@@ -94,6 +95,28 @@ class RaceDayRunnerTests(unittest.TestCase):
             self.assertEqual(schedule[0].post_at.isoformat(), "2026-05-02T10:05:00+09:00")
             self.assertEqual(schedule[0].first_due_at.isoformat(), "2026-05-02T09:05:00+09:00")
             self.assertEqual(schedule[0].deadline_at.isoformat(), "2026-05-02T09:40:00+09:00")
+
+    def test_mark_past_races_skipped_marks_only_finished_races(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prediction_base = Path(temp_dir) / "prediction_base_weekend.csv"
+            self.write_prediction_base(prediction_base)
+            schedule = build_schedule(prediction_base, "2026-05-02", 60, 20)
+            state = load_state(Path(temp_dir) / "state.json", Path(temp_dir), "2026-05-02", schedule)
+
+            before_post = datetime(2026, 5, 2, 10, 4, tzinfo=JST)
+            self.assertEqual(mark_past_races_skipped(state, schedule, before_post), [])
+            self.assertEqual(state["races"]["2026050205010101"]["status"], "not_due")
+            self.assertTrue(should_attempt(state["races"]["2026050205010101"], before_post, 240))
+
+            at_post = datetime(2026, 5, 2, 10, 5, tzinfo=JST)
+            skipped = mark_past_races_skipped(state, schedule, at_post)
+            self.assertEqual([item.race_key for item in skipped], ["2026050205010101"])
+            self.assertEqual(state["races"]["2026050205010101"]["status"], "skipped_past")
+            self.assertFalse(should_attempt(state["races"]["2026050205010101"], at_post, 240))
+
+            state["races"]["2026050205010101"]["status"] = "predicted_complete"
+            self.assertEqual(mark_past_races_skipped(state, schedule, at_post), [])
+            self.assertEqual(state["races"]["2026050205010101"]["status"], "predicted_complete")
 
     def test_validate_package_accepts_supported_manifest_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:

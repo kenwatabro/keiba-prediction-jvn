@@ -22,7 +22,7 @@ sys.path.insert(0, str(SRC_DIR))
 from model.model_registry import PACKAGE_MODEL_ARTIFACTS  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
-TERMINAL_STATUSES = {"predicted_complete", "predicted_partial", "failed_final"}
+TERMINAL_STATUSES = {"predicted_complete", "predicted_partial", "failed_final", "skipped_past"}
 EXPECTED_PACKAGE_MANIFEST_SCHEMA_VERSION = 1
 EXPECTED_PACKAGE_MANIFEST_TYPE = "weekend_package"
 
@@ -186,6 +186,25 @@ def load_state(state_path: Path, package_dir: Path, prediction_date: str, schedu
         current["deadline_at"] = isoformat(item.deadline_at)
         current["expected_rows"] = item.expected_rows
     return state
+
+
+def mark_past_races_skipped(state: dict[str, object], schedule: list[RaceSchedule], now: datetime) -> list[RaceSchedule]:
+    """Mark races whose post time has already passed as terminal so a mid-day start never predicts finished races."""
+    races = state.setdefault("races", {})
+    if not isinstance(races, dict):
+        return []
+    skipped: list[RaceSchedule] = []
+    for item in schedule:
+        race_state = races.get(item.race_key)
+        if not isinstance(race_state, dict):
+            continue
+        if str(race_state.get("status")) in TERMINAL_STATUSES:
+            continue
+        if now >= item.post_at:
+            race_state["status"] = "skipped_past"
+            race_state["last_error"] = f"post time {item.hasso_time} already passed at startup"
+            skipped.append(item)
+    return skipped
 
 
 def save_state(state_path: Path, state: dict[str, object]) -> None:
@@ -553,6 +572,9 @@ def run(args: argparse.Namespace) -> int:
         print_schedule(schedule)
 
         state = load_state(state_path, package_dir, args.prediction_date, schedule)
+        skipped = mark_past_races_skipped(state, schedule, jst_now())
+        for item in skipped:
+            print(f"Skipping {race_label(item.jyo_name, item.race_num)} {item.hasso_time} RaceKey={item.race_key}: post time already passed")
         save_state(state_path, state)
 
         while True:
